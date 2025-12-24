@@ -14,8 +14,8 @@ VulnTriage bridges the gap between "Vulnerable Package" and "Exploitable Code," 
 
 ### Install
 ```bash
-git clone https://github.com/yourusername/vuln-triage.git
-cd vuln-triage
+git clone https://github.com/yourusername/VulnTriage.git
+cd VulnTriage
 uv sync
 ```
 
@@ -39,9 +39,9 @@ uv run vulntriage scan --trivy-json trivy.json --src .
 | Analyst | GPT-4o | Reasons about exploitability |
 | UI | Typer + Rich | CLI experience |
 
-## Documentation
+## Acknowledgments
 
-See [docs/README.md](docs/README.md) for the full deep dive.
+VulnTriage consumes [Trivy](https://github.com/aquasecurity/trivy)'s JSON output. Trivy is an open-source vulnerability scanner by [Aqua Security](https://www.aquasec.com/) (Apache-2.0 license).
 
 ## License
 
