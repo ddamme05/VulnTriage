@@ -122,3 +122,17 @@ if TYPE_CHECKING:
 """
     st = parse_and_build(code)
     assert st.resolve_alias("r") is None
+
+
+def test_type_checking_else_branch_included() -> None:
+    """Imports in else branch of TYPE_CHECKING should be included."""
+    code = """\
+from typing import TYPE_CHECKING
+if TYPE_CHECKING:
+    import typing_only
+else:
+    import runtime_only
+"""
+    st = parse_and_build(code)
+    assert st.resolve_alias("typing_only") is None
+    assert st.resolve_alias("runtime_only") == "runtime_only"
