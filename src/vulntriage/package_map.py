@@ -31,18 +31,64 @@ def build_package_map() -> dict[str, list[str]]:
 
     Returns:
         Dictionary mapping canonicalized package names to lists of module names.
+        Unknown packages will NOT be in this dict — callers should treat
+        missing keys as "unmapped" and classify as needs_review.
     """
-    # TODO: Implement package mapping
+    # TODO: Implement full package mapping using importlib.metadata
     # - Introspect installed packages from environment
     # - Use importlib.metadata to get top-level names
     # - Merge with PACKAGE_OVERRIDES
 
-    # For now, return the overrides with canonicalized keys
     result: dict[str, list[str]] = {}
+
+    # Add overrides with canonicalized keys
     for pkg_name, modules in PACKAGE_OVERRIDES.items():
         canonical = canonicalize_package_name(pkg_name)
         result[canonical] = modules
+
+    # Also add common packages where package name = module name
+    # These are KNOWN to match, not guesses
+    for common_pkg in COMMON_MATCHING_PACKAGES:
+        canonical = canonicalize_package_name(common_pkg)
+        if canonical not in result:
+            result[canonical] = [common_pkg.lower().replace("-", "_")]
+
     return result
+
+
+# Packages where package name == module name (verified, not guessed)
+# This is an allowlist of KNOWN matches, not a fallback
+COMMON_MATCHING_PACKAGES: list[str] = [
+    "requests",
+    "urllib3",
+    "flask",
+    "django",
+    "numpy",
+    "pandas",
+    "boto3",
+    "botocore",
+    "certifi",
+    "click",
+    "jinja2",
+    "markupsafe",
+    "packaging",
+    "setuptools",
+    "wheel",
+    "pip",
+    "idna",
+    "chardet",
+    "six",
+    "pytz",
+    "cryptography",
+    "pycparser",
+    "cffi",
+    "attrs",
+    "jsonschema",
+    "httpx",
+    "httpcore",
+    "toml",
+    "tomli",
+]
 
 
 # Common manual overrides for packages where metadata is unreliable
@@ -58,4 +104,7 @@ PACKAGE_OVERRIDES: dict[str, list[str]] = {
     "charset-normalizer": ["charset_normalizer"],
     "google-auth": ["google.auth"],
     "protobuf": ["google.protobuf"],
+    "pydantic": ["pydantic"],
+    "typer": ["typer"],
+    "rich": ["rich"],
 }

@@ -163,9 +163,9 @@ def scan_directory(
         try:
             parsed = scan_file(file_path)
             results.append(parsed)
-        except (FileNotFoundError, UnicodeDecodeError) as e:
+        except FileNotFoundError as e:
             # HEURISTIC: Skip unreadable files
-            # WHY: File may have been deleted or have encoding issues
+            # WHY: File may have been deleted between discovery and parsing
             # LIMIT: We lose visibility into these files
             # ACCEPTABLE: Fail-closed - missing analysis → needs_review for affected vulns
             import warnings
