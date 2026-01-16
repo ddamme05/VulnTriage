@@ -103,8 +103,27 @@ def match_vulnerabilities(
         evidence: list[EvidenceRef] = []
 
         if not imported_in_files:
-            status = "dismissed"
-            reason = f"Package '{vuln.pkg_name}' is not imported in any application code"
+            # Before dismissing, check for uncertainty from wildcard/dynamic imports
+            # HEURISTIC: Uncertainty check
+            # WHY: Wildcard or dynamic imports may have imported the module
+            # LIMIT: Conservative - may flag packages that weren't actually used
+            # ACCEPTABLE: Fail-closed - uncertainty prevents false dismissal
+            uncertainty_reasons: list[str] = []
+            for analysis in analysis_map.values():
+                for module in modules:
+                    reason_str = analysis.symbol_table.has_uncertainty_for_module(module)
+                    if reason_str:
+                        uncertainty_reasons.append(reason_str)
+
+            if uncertainty_reasons:
+                status = "needs_review"
+                reason = (
+                    f"Package '{vuln.pkg_name}' has import uncertainty: "
+                    f"{uncertainty_reasons[0]}"
+                )
+            else:
+                status = "dismissed"
+                reason = f"Package '{vuln.pkg_name}' is not imported in any application code"
         elif not matching_calls:
             status = "needs_review"
             reason = f"Package '{vuln.pkg_name}' is imported but no direct calls found"

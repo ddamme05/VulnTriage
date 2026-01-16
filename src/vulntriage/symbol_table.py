@@ -26,6 +26,10 @@ class SymbolTable:
 
     file_path: Path
     imports: list[ImportedSymbol] = field(default_factory=list)
+    # Track wildcard imports: "from pkg import *" - can't know what was imported
+    wildcard_imports: list[str] = field(default_factory=list)  # module names
+    # Track dynamic imports: importlib.import_module(), __import__()
+    dynamic_imports: list[tuple[int, str]] = field(default_factory=list)  # (line, pattern)
 
     def get_module_for_alias(self, alias: str) -> str | None:
         """Look up the original module name for an alias.
@@ -84,6 +88,33 @@ class SymbolTable:
                 return True
         return False
 
+    def has_uncertainty_for_module(self, module: str) -> str | None:
+        """Check if there's uncertainty about imports from a module.
+
+        Returns a reason string if wildcard or dynamic imports could
+        have imported from this module, None otherwise.
+
+        Args:
+            module: The root module name to check (e.g., "requests").
+
+        Returns:
+            Reason string if uncertain, None if no uncertainty.
+        """
+        root = module.split(".")[0]
+
+        # Check wildcard imports
+        for wildcard_mod in self.wildcard_imports:
+            wildcard_root = wildcard_mod.split(".")[0]
+            if wildcard_root == root or wildcard_mod.startswith(root + "."):
+                return f"wildcard import 'from {wildcard_mod} import *'"
+
+        # Check dynamic imports
+        for line, pattern in self.dynamic_imports:
+            if root in pattern or pattern == "*":
+                return f"dynamic import at line {line}"
+
+        return None
+
 
 def build_symbol_table(path: Path, root_node: tree_sitter.Node) -> SymbolTable:
     """Build a symbol table from a parsed Python file.
@@ -103,6 +134,9 @@ def build_symbol_table(path: Path, root_node: tree_sitter.Node) -> SymbolTable:
 
     # Walk the tree looking for import statements
     _walk_imports(root_node, table, type_checking_ranges)
+
+    # Scan for dynamic imports (importlib.import_module, __import__)
+    _scan_dynamic_imports(root_node, table)
 
     return table
 
@@ -198,7 +232,12 @@ def _process_import_from_statement(node: tree_sitter.Node, table: SymbolTable) -
     # Process imported names
     for child in node.children:
         if child.type == "wildcard_import":
-            # from x import * - no bindings created
+            # from x import * - track for uncertainty detection
+            # HEURISTIC: Wildcard import
+            # WHY: Can't statically determine what was imported
+            # LIMIT: May flag modules that weren't actually used
+            # ACCEPTABLE: Fail-closed - uncertainty forces needs_review
+            table.wildcard_imports.append(module)
             return
 
         if child.type == "dotted_name" and child != module_node:
@@ -267,3 +306,47 @@ def _add_import(
     table.imports.append(
         ImportedSymbol(module=module, name=name, alias=alias, line=line)
     )
+
+
+def _scan_dynamic_imports(node: tree_sitter.Node, table: SymbolTable) -> None:
+    """Scan for dynamic import patterns: importlib.import_module(), __import__().
+
+    HEURISTIC: Dynamic import detection
+    WHY: Can't statically determine what module will be imported
+    LIMIT: Only detects direct calls, not wrapped/indirect usage
+    ACCEPTABLE: Fail-closed - presence of dynamic imports forces needs_review
+    """
+    if node.type == "call":
+        func_node = node.child_by_field_name("function")
+        if func_node:
+            func_text = func_node.text.decode("utf-8") if func_node.text else ""
+
+            # Check for importlib.import_module(...) or __import__(...)
+            is_dynamic = (
+                func_text == "__import__"
+                or func_text == "importlib.import_module"
+                or func_text.endswith(".import_module")
+            )
+
+            if is_dynamic:
+                line = node.start_point[0] + 1
+
+                # Try to extract the module name from first argument
+                args = node.child_by_field_name("arguments")
+                module_pattern = "*"  # Default: unknown module
+
+                if args:
+                    for child in args.children:
+                        if child.type == "string":
+                            # Extract string content
+                            text = child.text.decode("utf-8") if child.text else ""
+                            # Strip quotes
+                            module_pattern = text.strip("'\"")
+                            break
+
+                table.dynamic_imports.append((line, module_pattern))
+
+    # Recurse into children
+    for child in node.children:
+        _scan_dynamic_imports(child, table)
+

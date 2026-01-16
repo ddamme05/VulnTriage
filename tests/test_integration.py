@@ -227,3 +227,59 @@ def test_unknown_package_needs_review() -> None:
             assert "unknown" in results[0].reason.lower() or "mapping" in results[0].reason.lower()
     finally:
         trivy_json.unlink()
+
+
+def test_wildcard_import_forces_needs_review() -> None:
+    """Wildcard import should prevent dismissal."""
+    trivy_json = create_trivy_json([
+        {
+            "VulnerabilityID": "CVE-2023-00001",
+            "PkgName": "requests",
+            "InstalledVersion": "2.28.0",
+            "Severity": "HIGH",
+        }
+    ])
+
+    try:
+        with tempfile.TemporaryDirectory() as tmp:
+            tmp_path = Path(tmp)
+            # Wildcard import from requests - can't know what was imported
+            (tmp_path / "app.py").write_text("from requests import *\n")
+
+            results = triage(trivy_json, tmp_path)
+            assert len(results) == 1
+            # Should NOT be dismissed - wildcard creates uncertainty
+            assert results[0].status == "needs_review"
+            assert "wildcard" in results[0].reason.lower() or "uncertainty" in results[0].reason.lower()
+    finally:
+        trivy_json.unlink()
+
+
+def test_dynamic_import_forces_needs_review() -> None:
+    """Dynamic import should prevent dismissal."""
+    trivy_json = create_trivy_json([
+        {
+            "VulnerabilityID": "CVE-2023-00001",
+            "PkgName": "requests",
+            "InstalledVersion": "2.28.0",
+            "Severity": "HIGH",
+        }
+    ])
+
+    try:
+        with tempfile.TemporaryDirectory() as tmp:
+            tmp_path = Path(tmp)
+            # Dynamic import - can't know what module will be imported
+            (tmp_path / "app.py").write_text(
+                "import importlib\n"
+                "mod = importlib.import_module('requests')\n"
+            )
+
+            results = triage(trivy_json, tmp_path)
+            assert len(results) == 1
+            # Should NOT be dismissed - dynamic import creates uncertainty
+            assert results[0].status == "needs_review"
+            assert "dynamic" in results[0].reason.lower() or "uncertainty" in results[0].reason.lower()
+    finally:
+        trivy_json.unlink()
+
