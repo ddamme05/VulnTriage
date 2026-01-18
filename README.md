@@ -2,8 +2,6 @@
 
 [![Python 3.12+](https://img.shields.io/badge/python-3.12+-blue.svg)](https://www.python.org/downloads/)
 [![License: MIT](https://img.shields.io/badge/License-MIT-green.svg)](https://opensource.org/licenses/MIT)
-<!-- [![Tests](https://github.com/ddamme05/VulnTriage/actions/workflows/test.yml/badge.svg)](https://github.com/ddamme05/VulnTriage/actions/workflows/test.yml) -->
-<!-- [![PyPI version](https://badge.fury.io/py/vulntriage.svg)](https://badge.fury.io/py/vulntriage) -->
 
 **Democratizing reachability analysis for vulnerability triage.**
 
@@ -17,11 +15,12 @@ Security scanners like Trivy generate too many CVEs to manually triage. Most are
 
 ## Features
 
-- **Tree-sitter Parsing**: Fast, fault-tolerant import and usage detection
+- **Tree-sitter Parsing**: Fast, fault-tolerant import and call site detection
 - **Package Name Resolution**: Handles PyPI → import name mapping (e.g., `Pillow` → `PIL`)
-- **LLM-Assisted Analysis**: GPT-4o provides confidence scoring and reasoning (advisory only)
-- **Prioritization**: Ranks findings by CVSS severity and usage evidence strength
+- **Alias Resolution**: Tracks `import X as Y` and `from X import Y` patterns
+- **Wildcard/Dynamic Import Detection**: Flags `from X import *` and `importlib.import_module()`
 - **Fail-Closed Safety**: Uncertain findings default to `needs_review`, never auto-dismissed
+- **Deterministic Output**: Reproducible JSON for CI integration
 - **VEX Export Ready**: Designed for CycloneDX/OpenVEX integration (V2)
 
 ## What VulnTriage is NOT
@@ -55,8 +54,28 @@ trivy fs . --format json --output trivy.json
 ### Run Triage
 
 ```bash
-export OPENAI_API_KEY="sk-..."
 uv run vulntriage scan --trivy-json trivy.json --src .
+```
+
+### Output
+
+```
+VulnTriage - Reachability Analysis
+  Trivy report: trivy.json
+  Source path:  .
+
+Found 30 vulnerabilities:
+  🔴 Actionable:   6
+  🟡 Needs Review: 21
+  🟢 Dismissed:    3
+
+┏━━━━━━━━━━━━━━┳━━━━━━━━━━━━┳━━━━━━━━━━━━━━━━━━━━┳━━━━━━━━━━━━━━━┳━━━━━━━━━━━┓
+│ Status       │ Severity   │ CVE                │ Package       │ Evidence  │
+┡━━━━━━━━━━━━━━╇━━━━━━━━━━━━╇━━━━━━━━━━━━━━━━━━━━╇━━━━━━━━━━━━━━━╇━━━━━━━━━━━┩
+│ ACTIONABLE   │ HIGH       │ CVE-2019-10906     │ jinja2@2.10   │ 1 call(s) │
+│ REVIEW       │ HIGH       │ CVE-2024-23334     │ aiohttp@3.5.3 │ -         │
+│ DISMISSED    │ CRITICAL   │ CVE-2020-14343     │ pyyaml@3.13   │ -         │
+└──────────────┴────────────┴────────────────────┴───────────────┴───────────┘
 ```
 
 ### CLI Commands
@@ -65,6 +84,7 @@ uv run vulntriage scan --trivy-json trivy.json --src .
 uv run vulntriage --help        # Show all commands
 uv run vulntriage version       # Show version
 uv run vulntriage scan --help   # Scan options
+uv run vulntriage scan --json   # JSON output
 ```
 
 ## Architecture
@@ -74,7 +94,6 @@ uv run vulntriage scan --help   # Scan options
 | Scanner | Trivy | Finds CVEs in dependencies |
 | Parser | Tree-sitter | Finds imports and call sites |
 | Engine | Python + Pydantic | Orchestrates analysis |
-| Analyst | GPT-4o | Confidence scoring (advisory) |
 | UI | Typer + Rich | CLI experience |
 
 ## Classification
@@ -83,7 +102,7 @@ VulnTriage outputs three statuses:
 
 | Status | Meaning |
 |--------|---------|
-| `actionable` | Clear static usage evidence found |
+| `actionable` | Clear static usage evidence found (imports + calls) |
 | `needs_review` | Evidence exists but ambiguous/incomplete |
 | `dismissed` | No import evidence in scanned files |
 
@@ -92,24 +111,24 @@ VulnTriage outputs three statuses:
 ## Safety Attestations
 
 - **Fail-closed by design**: Parse failures, timeouts, and ambiguous mappings → `needs_review`
-- **No silent fallbacks**: Token-scan fallback emits structured warnings
-- **Coordinates-only evidence**: LLM outputs file/line refs, snippets read from disk
-- **LLM is advisory**: Classification is rule-based; LLM provides reasoning only
+- **Wildcard/dynamic imports**: Force `needs_review` to prevent false dismissals
+- **Coordinates-only evidence**: Store file/line refs, snippets read from disk
 - **Excluded paths are invisible**: Filtered before parsing, never contribute to dismissal
+- **Deterministic**: Same input → same output (sorted, reproducible)
 
 ## Requirements
 
 - Python 3.12+
 - [uv](https://github.com/astral-sh/uv) package manager
 - [Trivy](https://trivy.dev/) vulnerability scanner
-- OpenAI API key (for LLM analysis)
 
 ## Development
 
 ### Running Tests
 
 ```bash
-uv run pytest
+uv run pytest                    # All tests
+uv run pytest tests/test_integration.py -v  # Integration tests
 ```
 
 ### Linting

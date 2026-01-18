@@ -55,45 +55,75 @@ def load_trivy_report(path: Path) -> list[Vulnerability]:
         json.JSONDecodeError: If the file is not valid JSON.
         pydantic.ValidationError: If the JSON doesn't match expected schema.
     """
-    # Read and parse JSON
     content = path.read_text(encoding="utf-8")
+    return load_trivy_report_from_string(content)
+
+
+def load_trivy_report_from_string(content: str) -> list[Vulnerability]:
+    """Parse Trivy JSON from a string (useful for testing).
+
+    Args:
+        content: JSON string.
+
+    Returns:
+        List of Vulnerability objects.
+    """
     data = json.loads(content)
-
-    # Validate against Pydantic model
     report = TrivyReport.model_validate(data)
+    return _extract_vulnerabilities(report)
 
-    # Extract vulnerabilities from all results
+
+def _extract_vulnerabilities(report: TrivyReport) -> list[Vulnerability]:
+    """Extract and deduplicate vulnerabilities from a parsed report.
+
+    Args:
+        report: Parsed TrivyReport.
+
+    Returns:
+        List of deduplicated Vulnerability objects.
+    """
     vulnerabilities: list[Vulnerability] = []
     # Dedupe by (CVE, PkgName, Version) to handle same CVE in different packages/versions
     seen_keys: set[tuple[str, str, str]] = set()
 
-    if report.Results:
-        for result in report.Results:
-            if result.Vulnerabilities:
-                for vuln in result.Vulnerabilities:
-                    # Deduplicate by (CVE ID, package name, version)
-                    key = (vuln.VulnerabilityID, vuln.PkgName, vuln.InstalledVersion)
-                    if key in seen_keys:
-                        continue
-                    seen_keys.add(key)
+    if not report.Results:
+        return vulnerabilities
 
-                    # Extract CVSS score (prefer nvd, fallback to first available)
-                    cvss_score = _extract_cvss_score(vuln.CVSS)
+    for result in report.Results:
+        if not result.Vulnerabilities:
+            continue
 
-                    vulnerabilities.append(
-                        Vulnerability(
-                            vuln_id=vuln.VulnerabilityID,
-                            pkg_name=vuln.PkgName,
-                            installed_version=vuln.InstalledVersion,
-                            fixed_version=vuln.FixedVersion,
-                            severity=vuln.Severity,
-                            title=vuln.Title,
-                            description=vuln.Description,
-                            cvss_score=cvss_score,
-                        )
-                    )
+        for vuln in result.Vulnerabilities:
+            # Deduplicate by (CVE ID, package name, version)
+            key = (vuln.VulnerabilityID, vuln.PkgName, vuln.InstalledVersion)
+            if key in seen_keys:
+                continue
+            seen_keys.add(key)
+
+            vulnerabilities.append(_convert_vulnerability(vuln))
 
     return vulnerabilities
+
+
+def _convert_vulnerability(vuln: TrivyVulnerability) -> Vulnerability:
+    """Convert a TrivyVulnerability to our internal Vulnerability model.
+
+    Args:
+        vuln: Raw Trivy vulnerability.
+
+    Returns:
+        Internal Vulnerability object.
+    """
+    return Vulnerability(
+        vuln_id=vuln.VulnerabilityID,
+        pkg_name=vuln.PkgName,
+        installed_version=vuln.InstalledVersion,
+        fixed_version=vuln.FixedVersion,
+        severity=vuln.Severity,
+        title=vuln.Title,
+        description=vuln.Description,
+        cvss_score=_extract_cvss_score(vuln.CVSS),
+    )
 
 
 def _extract_cvss_score(cvss_data: dict[str, Any] | None) -> float | None:
@@ -137,45 +167,3 @@ def _extract_cvss_score(cvss_data: dict[str, Any] | None) -> float | None:
         return None
 
     return None
-
-
-def load_trivy_report_from_string(content: str) -> list[Vulnerability]:
-    """Parse Trivy JSON from a string (useful for testing).
-
-    Args:
-        content: JSON string.
-
-    Returns:
-        List of Vulnerability objects.
-    """
-    data = json.loads(content)
-    report = TrivyReport.model_validate(data)
-
-    vulnerabilities: list[Vulnerability] = []
-    seen_keys: set[tuple[str, str, str]] = set()
-
-    if report.Results:
-        for result in report.Results:
-            if result.Vulnerabilities:
-                for vuln in result.Vulnerabilities:
-                    key = (vuln.VulnerabilityID, vuln.PkgName, vuln.InstalledVersion)
-                    if key in seen_keys:
-                        continue
-                    seen_keys.add(key)
-
-                    cvss_score = _extract_cvss_score(vuln.CVSS)
-
-                    vulnerabilities.append(
-                        Vulnerability(
-                            vuln_id=vuln.VulnerabilityID,
-                            pkg_name=vuln.PkgName,
-                            installed_version=vuln.InstalledVersion,
-                            fixed_version=vuln.FixedVersion,
-                            severity=vuln.Severity,
-                            title=vuln.Title,
-                            description=vuln.Description,
-                            cvss_score=cvss_score,
-                        )
-                    )
-
-    return vulnerabilities
