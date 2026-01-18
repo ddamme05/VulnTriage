@@ -132,7 +132,8 @@ def match_vulnerabilities(
             # "not exploitable / unclear." Only keep "actionable" for confirmed exploitable.
             status = "actionable"
             reason = f"Found {len(matching_calls)} call(s) to '{vuln.pkg_name}'"
-            for path, line, callee in matching_calls:
+            # Sort evidence for deterministic output (file path, line, callee)
+            for path, line, callee in sorted(matching_calls):
                 evidence.append(EvidenceRef(
                     file_path=str(path),
                     line_start=line,
