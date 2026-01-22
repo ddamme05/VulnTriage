@@ -163,11 +163,12 @@ def scan_directory(
         try:
             parsed = scan_file(file_path)
             results.append(parsed)
-        except FileNotFoundError as e:
-            # HEURISTIC: Skip unreadable files
-            # WHY: File may have been deleted between discovery and parsing
+        except (FileNotFoundError, PermissionError, UnicodeDecodeError) as e:
+            # HEURISTIC: Skip unreadable/unparseable files
+            # WHY: File may be deleted, permission-denied, or non-UTF-8 encoded
             # LIMIT: We lose visibility into these files
             # ACCEPTABLE: Fail-closed - missing analysis → needs_review for affected vulns
+            # NOTE: VulnTriage assumes UTF-8 sources; non-UTF-8 files are skipped
             import warnings
             warnings.warn(f"Skipping unreadable file {file_path}: {e}")
 
