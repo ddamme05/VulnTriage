@@ -123,6 +123,10 @@ def _convert_vulnerability(vuln: TrivyVulnerability) -> Vulnerability:
         title=vuln.Title,
         description=vuln.Description,
         cvss_score=_extract_cvss_score(vuln.CVSS),
+        # V2 fields - defaults for now
+        proximity=None,
+        epss_score=None,
+        is_kev=False,
     )
 
 

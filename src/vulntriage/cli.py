@@ -9,6 +9,7 @@ from rich.table import Table
 
 from vulntriage import __version__
 from vulntriage.triage import triage
+from vulntriage.models import ScanResult
 
 app = typer.Typer(
     name="vulntriage",
@@ -84,9 +85,8 @@ def scan(
         _output_table(results)
 
 
-def _output_json(results: list) -> None:
+def _output_json(results: list["ScanResult"]) -> None:
     """Output results as JSON."""
-    import json
     output = []
     for r in results:
         output.append({
@@ -110,7 +110,7 @@ def _output_json(results: list) -> None:
     console.print_json(data=output)
 
 
-def _output_table(results: list) -> None:
+def _output_table(results: list["ScanResult"]) -> None:
     """Output results as a rich table."""
     # Count by status
     status_counts = {"actionable": 0, "needs_review": 0, "dismissed": 0}
