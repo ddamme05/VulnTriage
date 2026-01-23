@@ -136,3 +136,25 @@ else:
     st = parse_and_build(code)
     assert st.resolve_alias("typing_only") is None
     assert st.resolve_alias("runtime_only") == "runtime_only"
+
+
+def test_type_checking_qualified_name() -> None:
+    """typing.TYPE_CHECKING should be recognized."""
+    code = """\
+import typing
+if typing.TYPE_CHECKING:
+    import type_only
+"""
+    st = parse_and_build(code)
+    assert st.resolve_alias("type_only") is None
+
+
+def test_type_checking_aliased() -> None:
+    """Aliased TYPE_CHECKING (e.g., t.TYPE_CHECKING) should be recognized."""
+    code = """\
+import typing as t
+if t.TYPE_CHECKING:
+    import type_only
+"""
+    st = parse_and_build(code)
+    assert st.resolve_alias("type_only") is None

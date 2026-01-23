@@ -163,9 +163,28 @@ def _find_type_checking_blocks(
 
 
 def _is_type_checking_condition(node: tree_sitter.Node) -> bool:
-    """Check if a condition node is TYPE_CHECKING."""
+    """Check if a condition node is TYPE_CHECKING.
+
+    Handles:
+    - `if TYPE_CHECKING:`
+    - `if typing.TYPE_CHECKING:`
+    - `if t.TYPE_CHECKING:` (aliased)
+    """
+    # HEURISTIC: Match any X.TYPE_CHECKING pattern
+    # WHY: Covers typing.TYPE_CHECKING and common aliases (t.TYPE_CHECKING)
+    # LIMIT: Could match custom TYPE_CHECKING constants in rare edge cases
+    # ACCEPTABLE: False match → import skipped → false positive (safe, not false dismissal)
+
+    # Simple identifier: TYPE_CHECKING
     if node.type == "identifier":
         return node.text is not None and node.text.decode("utf-8") == "TYPE_CHECKING"
+
+    # Attribute access: typing.TYPE_CHECKING or alias.TYPE_CHECKING
+    if node.type == "attribute":
+        attr_node = node.child_by_field_name("attribute")
+        if attr_node and attr_node.text:
+            return attr_node.text.decode("utf-8") == "TYPE_CHECKING"
+
     return False
 
 
