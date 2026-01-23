@@ -16,6 +16,7 @@ def triage(
     trivy_json: Path,
     src: Path,
     include_tests: bool = False,
+    strict: bool = False,
 ) -> list[ScanResult]:
     """Run the full vulnerability triage pipeline.
 
@@ -30,6 +31,7 @@ def triage(
         trivy_json: Path to Trivy JSON report.
         src: Path to source directory to analyze.
         include_tests: If True, include test files in analysis.
+        strict: If True, prevent dismissals when any files were skipped.
 
     Returns:
         List of ScanResult objects with classification and evidence.
@@ -57,12 +59,12 @@ def triage(
         target_modules.add(vuln.pkg_name.lower().replace("-", "_"))
 
     # Stage 3: Scan source directory
-    parsed_files = scan_directory(src, include_tests=include_tests)
+    scan_result = scan_directory(src, include_tests=include_tests)
 
     # Stage 4: Find call sites and build analysis map
     analysis_map: dict[Path, FileAnalysis] = {}
 
-    for parsed in parsed_files:
+    for parsed in scan_result.parsed_files:
         call_sites = find_call_sites(
             parsed.path,
             parsed.tree.root_node,
@@ -83,6 +85,11 @@ def triage(
         package_to_modules,
     )
 
+    # Strict mode: if any files were skipped, prevent dismissals
+    if strict and scan_result.skipped_files:
+        skipped_count = len(scan_result.skipped_files)
+        results = _apply_strict_mode(results, skipped_count)
+
     # Sort results by severity priority for stable output
     severity_order = {"CRITICAL": 0, "HIGH": 1, "MEDIUM": 2, "LOW": 3, "UNKNOWN": 4}
     results.sort(key=lambda r: (
@@ -91,3 +98,34 @@ def triage(
     ))
 
     return results
+
+
+def _apply_strict_mode(results: list[ScanResult], skipped_count: int) -> list[ScanResult]:
+    """Prevent dismissals in strict mode - dismissed vulns become needs_review.
+
+    Actionable results are kept as-is (we have evidence of usage).
+    Only dismissed results are upgraded - we can't prove absence with incomplete scan.
+
+    Args:
+        results: Original classification results.
+        skipped_count: Number of files that were skipped.
+
+    Returns:
+        Updated results with dismissed vulns forced to needs_review.
+    """
+    updated: list[ScanResult] = []
+
+    for r in results:
+        if r.status == "dismissed":
+            # Force to needs_review - we can't prove absence with incomplete scan
+            updated.append(ScanResult(
+                vulnerability=r.vulnerability,
+                status="needs_review",
+                reason=f"{r.reason}; {skipped_count} file(s) skipped (--strict mode)",
+                evidence=r.evidence,
+            ))
+        else:
+            # actionable and needs_review stay as-is
+            updated.append(r)
+
+    return updated

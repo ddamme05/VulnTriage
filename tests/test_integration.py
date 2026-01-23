@@ -283,3 +283,48 @@ def test_dynamic_import_forces_needs_review() -> None:
     finally:
         trivy_json.unlink()
 
+
+def test_strict_mode_forces_needs_review_when_files_skipped() -> None:
+    """Strict mode should force dismissed to needs_review when files are skipped."""
+    import vulntriage.scanner as scanner_module
+
+    trivy_json = create_trivy_json([
+        {
+            "VulnerabilityID": "CVE-2023-00001",
+            "PkgName": "requests",
+            "InstalledVersion": "2.28.0",
+            "Severity": "HIGH",
+        }
+    ])
+
+    # Temporarily set small file size limit to force a skip
+    original_limit = scanner_module.MAX_FILE_SIZE_BYTES
+    scanner_module.MAX_FILE_SIZE_BYTES = 50  # 50 bytes
+
+    try:
+        with tempfile.TemporaryDirectory() as tmp:
+            tmp_path = Path(tmp)
+            # Small file - no requests import
+            (tmp_path / "small.py").write_text("x = 1")
+            # Large file - will be skipped
+            (tmp_path / "large.py").write_text("x = 1\n" * 20)
+
+            import warnings
+            with warnings.catch_warnings(record=True):
+                warnings.simplefilter("always")
+
+                # Without strict mode, should be dismissed
+                results_normal = triage(trivy_json, tmp_path, strict=False)
+                assert len(results_normal) == 1
+                assert results_normal[0].status == "dismissed"
+
+                # With strict mode, should be needs_review
+                results_strict = triage(trivy_json, tmp_path, strict=True)
+                assert len(results_strict) == 1
+                assert results_strict[0].status == "needs_review"
+                assert "--strict" in results_strict[0].reason
+                assert "skipped" in results_strict[0].reason.lower()
+    finally:
+        scanner_module.MAX_FILE_SIZE_BYTES = original_limit
+        trivy_json.unlink()
+
