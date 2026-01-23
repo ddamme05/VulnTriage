@@ -36,6 +36,13 @@ DEFAULT_EXCLUDE_PATTERNS = frozenset({
     "notebooks",
 })
 
+# Maximum file size to parse (1MB default - prevents DoS on huge generated files)
+MAX_FILE_SIZE_BYTES = 1_000_000
+
+
+class FileTooLargeError(Exception):
+    """Raised when a file exceeds MAX_FILE_SIZE_BYTES."""
+
 
 @dataclass
 class ParsedFile:
@@ -44,6 +51,14 @@ class ParsedFile:
     path: Path
     tree: tree_sitter.Tree
     symbol_table: SymbolTable
+
+
+@dataclass
+class ScanDirectoryResult:
+    """Result of scanning a directory, including skipped files."""
+
+    parsed_files: list[ParsedFile]
+    skipped_files: list[tuple[Path, str]]  # (path, reason)
 
 
 def discover_python_files(
@@ -122,7 +137,15 @@ def parse_file(path: Path) -> tree_sitter.Tree:
 
     Raises:
         FileNotFoundError: If the file doesn't exist.
+        FileTooLargeError: If the file exceeds MAX_FILE_SIZE_BYTES.
     """
+    # Check file size before reading (prevent DoS from huge generated files)
+    file_size = path.stat().st_size
+    if file_size > MAX_FILE_SIZE_BYTES:
+        raise FileTooLargeError(
+            f"File {path} is {file_size:,} bytes (max: {MAX_FILE_SIZE_BYTES:,})"
+        )
+
     content = path.read_bytes()
     return _PARSER.parse(content)
 
@@ -145,7 +168,7 @@ def scan_directory(
     src: Path,
     exclude_patterns: frozenset[str] | None = None,
     include_tests: bool = False,
-) -> list[ParsedFile]:
+) -> ScanDirectoryResult:
     """Discover and parse all Python files in a directory.
 
     Args:
@@ -154,22 +177,23 @@ def scan_directory(
         include_tests: If False, exclude test files.
 
     Returns:
-        List of ParsedFile objects, sorted by path.
+        ScanDirectoryResult with parsed files and skipped files.
     """
     files = discover_python_files(src, exclude_patterns, include_tests)
-    results: list[ParsedFile] = []
+    parsed_files: list[ParsedFile] = []
+    skipped_files: list[tuple[Path, str]] = []
 
     for file_path in files:
         try:
             parsed = scan_file(file_path)
-            results.append(parsed)
-        except (FileNotFoundError, PermissionError, UnicodeDecodeError) as e:
-            # HEURISTIC: Skip unreadable/unparseable files
-            # WHY: File may be deleted, permission-denied, or non-UTF-8 encoded
+            parsed_files.append(parsed)
+        except (FileNotFoundError, PermissionError, UnicodeDecodeError, FileTooLargeError) as e:
+            # HEURISTIC: Skip unreadable/unparseable/oversized files
+            # WHY: File may be deleted, permission-denied, non-UTF-8, or too large
             # LIMIT: We lose visibility into these files
-            # ACCEPTABLE: Fail-closed - missing analysis → needs_review for affected vulns
-            # NOTE: VulnTriage assumes UTF-8 sources; non-UTF-8 files are skipped
+            # ACCEPTABLE: Fail-closed in --strict mode
             import warnings
-            warnings.warn(f"Skipping unreadable file {file_path}: {e}")
+            warnings.warn(f"Skipping file {file_path}: {e}")
+            skipped_files.append((file_path, str(e)))
 
-    return results
+    return ScanDirectoryResult(parsed_files=parsed_files, skipped_files=skipped_files)
