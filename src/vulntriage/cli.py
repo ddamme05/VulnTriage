@@ -57,6 +57,13 @@ def scan(
             help="Output results as JSON.",
         ),
     ] = False,
+    strict: Annotated[
+        bool,
+        typer.Option(
+            "--strict",
+            help="Fail closed: prevent dismissals if any files were skipped.",
+        ),
+    ] = False,
 ) -> None:
     """Scan source code for reachable vulnerabilities.
 
@@ -67,10 +74,12 @@ def scan(
         console.print("[bold blue]VulnTriage[/] - Reachability Analysis")
         console.print(f"  Trivy report: [cyan]{trivy_json}[/]")
         console.print(f"  Source path:  [cyan]{src}[/]")
+        if strict:
+            console.print("  Mode:         [yellow]--strict[/]")
         console.print()
 
     # Run the triage pipeline
-    results = triage(trivy_json, src, include_tests=include_tests)
+    results = triage(trivy_json, src, include_tests=include_tests, strict=strict)
 
     if not results:
         if json_output:
