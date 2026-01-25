@@ -4,8 +4,6 @@ import json
 import tempfile
 from pathlib import Path
 
-import pytest
-
 from vulntriage.triage import triage
 
 
@@ -328,3 +326,296 @@ def test_strict_mode_forces_needs_review_when_files_skipped() -> None:
         scanner_module.MAX_FILE_SIZE_BYTES = original_limit
         trivy_json.unlink()
 
+
+# --- EPSS/KEV Enrichment Integration Tests ---
+
+
+def test_enrichment_populates_epss_and_kev_fields() -> None:
+    """Enrichment should populate epss_score and is_kev on vulnerabilities."""
+    trivy_json = create_trivy_json([
+        {
+            "VulnerabilityID": "CVE-2021-44228",  # In bundled sample data
+            "PkgName": "log4j",
+            "InstalledVersion": "2.14.0",
+            "Severity": "CRITICAL",
+        }
+    ])
+
+    try:
+        with tempfile.TemporaryDirectory() as tmp:
+            tmp_path = Path(tmp)
+            create_source_file(tmp_path, "x = 1")  # No import
+
+            results = triage(trivy_json, tmp_path, enrich=True)
+            assert len(results) == 1
+            vuln = results[0].vulnerability
+
+            # CVE-2021-44228 is in bundled sample data (EPSS and KEV)
+            # NOTE: These assertions are coupled to bundled sample data values
+            assert vuln.epss_score is not None
+            assert vuln.is_kev is True
+    finally:
+        trivy_json.unlink()
+
+
+def test_no_enrich_leaves_fields_none() -> None:
+    """--no-enrich should leave EPSS/KEV fields as None/False."""
+    trivy_json = create_trivy_json([
+        {
+            "VulnerabilityID": "CVE-2021-44228",
+            "PkgName": "log4j",
+            "InstalledVersion": "2.14.0",
+            "Severity": "CRITICAL",
+        }
+    ])
+
+    try:
+        with tempfile.TemporaryDirectory() as tmp:
+            tmp_path = Path(tmp)
+            create_source_file(tmp_path, "x = 1")
+
+            results = triage(trivy_json, tmp_path, enrich=False)
+            assert len(results) == 1
+            vuln = results[0].vulnerability
+
+            # Should remain unenriched
+            assert vuln.epss_score is None
+            assert vuln.is_kev is False
+    finally:
+        trivy_json.unlink()
+
+
+def test_prioritize_risk_sorts_kev_first() -> None:
+    """--prioritize-risk should sort KEV vulnerabilities before non-KEV."""
+    trivy_json = create_trivy_json([
+        {
+            "VulnerabilityID": "CVE-2023-99999",  # Not in KEV
+            "PkgName": "pkg1",
+            "InstalledVersion": "1.0.0",
+            "Severity": "CRITICAL",
+        },
+        {
+            "VulnerabilityID": "CVE-2021-44228",  # In KEV
+            "PkgName": "log4j",
+            "InstalledVersion": "2.14.0",
+            "Severity": "HIGH",  # Lower severity but KEV
+        },
+    ])
+
+    try:
+        with tempfile.TemporaryDirectory() as tmp:
+            tmp_path = Path(tmp)
+            create_source_file(tmp_path, "x = 1")
+
+            # Default sort: CRITICAL first
+            results_default = triage(trivy_json, tmp_path, prioritize_risk=False)
+            assert len(results_default) == 2
+            assert results_default[0].vulnerability.vuln_id == "CVE-2023-99999"
+
+            # Risk sort: KEV first
+            results_risk = triage(trivy_json, tmp_path, prioritize_risk=True)
+            assert len(results_risk) == 2
+            assert results_risk[0].vulnerability.vuln_id == "CVE-2021-44228"
+            assert results_risk[0].vulnerability.is_kev is True
+    finally:
+        trivy_json.unlink()
+
+
+def test_prioritize_risk_sorts_by_epss_within_kev() -> None:
+    """--prioritize-risk should sort by EPSS within KEV/non-KEV groups."""
+    trivy_json = create_trivy_json([
+        {
+            "VulnerabilityID": "CVE-2023-6129",  # Low EPSS in sample
+            "PkgName": "pkg1",
+            "InstalledVersion": "1.0.0",
+            "Severity": "CRITICAL",
+        },
+        {
+            "VulnerabilityID": "CVE-2023-44487",  # High EPSS in sample
+            "PkgName": "pkg2",
+            "InstalledVersion": "1.0.0",
+            "Severity": "LOW",
+        },
+    ])
+
+    try:
+        with tempfile.TemporaryDirectory() as tmp:
+            tmp_path = Path(tmp)
+            create_source_file(tmp_path, "x = 1")
+
+            results = triage(trivy_json, tmp_path, prioritize_risk=True)
+            assert len(results) == 2
+
+            # Higher EPSS should come first (sorting by EPSS desc)
+            first_epss = results[0].vulnerability.epss_score or 0
+            second_epss = results[1].vulnerability.epss_score or 0
+            assert first_epss >= second_epss
+    finally:
+        trivy_json.unlink()
+
+
+def test_cve_normalization_handles_lowercase() -> None:
+    """CVE IDs should be normalized for matching."""
+    # CVE-2021-44228 is in sample data
+    trivy_json = create_trivy_json([
+        {
+            "VulnerabilityID": "cve-2021-44228",  # lowercase
+            "PkgName": "log4j",
+            "InstalledVersion": "2.14.0",
+            "Severity": "CRITICAL",
+        }
+    ])
+
+    try:
+        with tempfile.TemporaryDirectory() as tmp:
+            tmp_path = Path(tmp)
+            create_source_file(tmp_path, "x = 1")
+
+            results = triage(trivy_json, tmp_path, enrich=True)
+            assert len(results) == 1
+            vuln = results[0].vulnerability
+
+            # Should match despite lowercase
+            assert vuln.epss_score is not None
+            assert vuln.is_kev is True
+    finally:
+        trivy_json.unlink()
+
+
+def test_unknown_cve_has_no_epss() -> None:
+    """CVE not in EPSS data should have None score."""
+    trivy_json = create_trivy_json([
+        {
+            "VulnerabilityID": "CVE-9999-99999",  # Not in any data
+            "PkgName": "unknown-pkg",
+            "InstalledVersion": "1.0.0",
+            "Severity": "MEDIUM",
+        }
+    ])
+
+    try:
+        with tempfile.TemporaryDirectory() as tmp:
+            tmp_path = Path(tmp)
+            create_source_file(tmp_path, "x = 1")
+
+            results = triage(trivy_json, tmp_path, enrich=True)
+            assert len(results) == 1
+            vuln = results[0].vulnerability
+
+            assert vuln.epss_score is None
+            assert vuln.is_kev is False
+    finally:
+        trivy_json.unlink()
+
+
+def test_enrichment_with_actionable_vulnerability() -> None:
+    """Enrichment should work alongside actionable classification."""
+    trivy_json = create_trivy_json([
+        {
+            "VulnerabilityID": "CVE-2021-44228",
+            "PkgName": "requests",
+            "InstalledVersion": "2.28.0",
+            "Severity": "CRITICAL",
+        }
+    ])
+
+    try:
+        with tempfile.TemporaryDirectory() as tmp:
+            tmp_path = Path(tmp)
+            # Import AND call - should be actionable
+            create_source_file(tmp_path, "import requests\nrequests.get('url')")
+
+            results = triage(trivy_json, tmp_path, enrich=True)
+            assert len(results) == 1
+
+            # Should be both enriched AND actionable
+            assert results[0].status == "actionable"
+            assert results[0].vulnerability.epss_score is not None
+            assert results[0].vulnerability.is_kev is True
+    finally:
+        trivy_json.unlink()
+
+
+def test_prioritize_risk_kev_without_epss_vs_non_kev_with_epss() -> None:
+    """KEV without EPSS should sort before non-KEV with EPSS.
+
+    This tests the edge case where:
+    - CVE-2017-5638 is in KEV but NOT in EPSS sample
+    - CVE-2023-32681 is NOT in KEV but HAS EPSS data (12.5%)
+
+    Expected: KEV item first (even without EPSS), then non-KEV with EPSS.
+    """
+    trivy_json = create_trivy_json([
+        {
+            "VulnerabilityID": "CVE-2023-32681",  # NOT in KEV, HAS EPSS (12.5%)
+            "PkgName": "requests",
+            "InstalledVersion": "2.28.0",
+            "Severity": "MEDIUM",
+        },
+        {
+            "VulnerabilityID": "CVE-2017-5638",  # IN KEV, NO EPSS
+            "PkgName": "struts",
+            "InstalledVersion": "2.3.0",
+            "Severity": "CRITICAL",
+        },
+    ])
+
+    try:
+        with tempfile.TemporaryDirectory() as tmp:
+            tmp_path = Path(tmp)
+            create_source_file(tmp_path, "x = 1")
+
+            results = triage(trivy_json, tmp_path, prioritize_risk=True)
+            assert len(results) == 2
+
+            # KEV item should be first, even though it has no EPSS
+            assert results[0].vulnerability.vuln_id == "CVE-2017-5638"
+            assert results[0].vulnerability.is_kev is True
+            assert results[0].vulnerability.epss_score is None  # No EPSS data
+
+            # Non-KEV with EPSS should be second
+            assert results[1].vulnerability.vuln_id == "CVE-2023-32681"
+            assert results[1].vulnerability.is_kev is False
+            assert results[1].vulnerability.epss_score is not None  # Has EPSS
+    finally:
+        trivy_json.unlink()
+
+
+def test_prioritize_risk_missing_epss_falls_back_to_severity() -> None:
+    """CVEs without EPSS should sort by severity within their group.
+
+    Tests that CRITICAL without EPSS comes before MEDIUM without EPSS.
+    """
+    trivy_json = create_trivy_json([
+        {
+            "VulnerabilityID": "CVE-9999-00001",  # Not in EPSS, MEDIUM
+            "PkgName": "pkg1",
+            "InstalledVersion": "1.0.0",
+            "Severity": "MEDIUM",
+        },
+        {
+            "VulnerabilityID": "CVE-9999-00002",  # Not in EPSS, CRITICAL
+            "PkgName": "pkg2",
+            "InstalledVersion": "1.0.0",
+            "Severity": "CRITICAL",
+        },
+    ])
+
+    try:
+        with tempfile.TemporaryDirectory() as tmp:
+            tmp_path = Path(tmp)
+            create_source_file(tmp_path, "x = 1")
+
+            results = triage(trivy_json, tmp_path, prioritize_risk=True)
+            assert len(results) == 2
+
+            # Both have no EPSS, so should fall back to severity
+            assert results[0].vulnerability.vuln_id == "CVE-9999-00002"  # CRITICAL
+            assert results[0].vulnerability.severity == "CRITICAL"
+            assert results[0].vulnerability.epss_score is None
+
+            assert results[1].vulnerability.vuln_id == "CVE-9999-00001"  # MEDIUM
+            assert results[1].vulnerability.severity == "MEDIUM"
+            assert results[1].vulnerability.epss_score is None
+    finally:
+        trivy_json.unlink()
