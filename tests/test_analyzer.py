@@ -5,7 +5,7 @@ from pathlib import Path
 import tree_sitter
 import tree_sitter_python
 
-from vulntriage.analyzer import find_call_sites, check_dangerous_inputs, CallSite
+from vulntriage.analyzer import CallSite, check_dangerous_inputs, find_call_sites
 from vulntriage.symbol_table import build_symbol_table
 
 # Initialize parser

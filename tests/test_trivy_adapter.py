@@ -4,14 +4,11 @@ import json
 import tempfile
 from pathlib import Path
 
-import pytest
-
 from vulntriage.trivy_adapter import (
+    _extract_cvss_score,
     load_trivy_report,
     load_trivy_report_from_string,
-    _extract_cvss_score,
 )
-
 
 # Minimal Trivy JSON fixture
 MINIMAL_TRIVY_JSON = {

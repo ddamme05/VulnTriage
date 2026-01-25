@@ -4,10 +4,12 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from pathlib import Path
-
-import tree_sitter
+from typing import TYPE_CHECKING
 
 from .symbol_table import SymbolTable, _is_type_checking_condition
+
+if TYPE_CHECKING:
+    import tree_sitter
 
 
 @dataclass
@@ -117,9 +119,8 @@ def _process_call(
         return None
 
     # If target_modules is specified, filter by module prefix
-    if target_modules is not None:
-        if not _callee_matches_any_module(callee, target_modules):
-            return None
+    if target_modules is not None and not _callee_matches_any_module(callee, target_modules):
+        return None
 
     # Extract context (3 lines before and after)
     line = node.start_point[0] + 1  # 1-indexed
@@ -155,7 +156,7 @@ def _resolve_callee(node: tree_sitter.Node, symbol_table: SymbolTable) -> str | 
 
         if resolved_root:
             # Replace root with resolved name
-            return ".".join([resolved_root] + parts[1:])
+            return ".".join([resolved_root, *parts[1:]])
         else:
             # Return as-is
             return ".".join(parts)
@@ -198,10 +199,7 @@ def _collect_attribute_parts(node: tree_sitter.Node) -> list[str]:
 
 def _callee_matches_any_module(callee: str, modules: set[str]) -> bool:
     """Check if callee matches any of the target modules."""
-    for module in modules:
-        if callee == module or callee.startswith(module + "."):
-            return True
-    return False
+    return any(callee == module or callee.startswith(module + ".") for module in modules)
 
 
 def _extract_context(source_lines: list[str], line: int, context_lines: int = 3) -> str:
@@ -237,8 +235,4 @@ def check_dangerous_inputs(call_site: CallSite) -> bool:
     ]
 
     context_lower = call_site.context.lower()
-    for pattern in dangerous_patterns:
-        if pattern.lower() in context_lower:
-            return True
-
-    return False
+    return any(pattern.lower() in context_lower for pattern in dangerous_patterns)

@@ -190,10 +190,7 @@ def _is_type_checking_condition(node: tree_sitter.Node) -> bool:
 
 def _is_in_type_checking(line: int, ranges: list[tuple[int, int]]) -> bool:
     """Check if a line is inside a TYPE_CHECKING block."""
-    for start, end in ranges:
-        if start <= line <= end:
-            return True
-    return False
+    return any(start <= line <= end for start, end in ranges)
 
 
 def _walk_imports(
@@ -342,9 +339,7 @@ def _scan_dynamic_imports(node: tree_sitter.Node, table: SymbolTable) -> None:
 
             # Check for importlib.import_module(...) or __import__(...)
             is_dynamic = (
-                func_text == "__import__"
-                or func_text == "importlib.import_module"
-                or func_text.endswith(".import_module")
+                func_text in {"__import__", "importlib.import_module"} or func_text.endswith(".import_module")
             )
 
             if is_dynamic:

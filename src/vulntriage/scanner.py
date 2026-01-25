@@ -193,7 +193,7 @@ def scan_directory(
             # LIMIT: We lose visibility into these files
             # ACCEPTABLE: Fail-closed in --strict mode
             import warnings
-            warnings.warn(f"Skipping file {file_path}: {e}")
+            warnings.warn(f"Skipping file {file_path}: {e}", stacklevel=2)
             skipped_files.append((file_path, str(e)))
 
     return ScanDirectoryResult(parsed_files=parsed_files, skipped_files=skipped_files)

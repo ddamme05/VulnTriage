@@ -6,12 +6,11 @@ from pathlib import Path
 import pytest
 
 from vulntriage.scanner import (
+    FileTooLargeError,
     discover_python_files,
     parse_file,
-    scan_file,
     scan_directory,
-    DEFAULT_EXCLUDE_PATTERNS,
-    FileTooLargeError,
+    scan_file,
 )
 
 

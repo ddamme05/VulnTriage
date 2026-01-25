@@ -160,7 +160,7 @@ def _extract_cvss_score(cvss_data: dict[str, Any] | None) -> float | None:
                     return float(nvd["V2Score"])
 
         # Fallback to any available source
-        for source, scores in cvss_data.items():
+        for _source, scores in cvss_data.items():
             if isinstance(scores, dict):
                 if "V3Score" in scores and scores["V3Score"] is not None:
                     return float(scores["V3Score"])

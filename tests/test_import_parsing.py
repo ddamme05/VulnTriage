@@ -2,12 +2,10 @@
 
 from pathlib import Path
 
-import pytest
 import tree_sitter
 import tree_sitter_python
 
 from vulntriage.symbol_table import build_symbol_table
-
 
 _LANGUAGE = tree_sitter.Language(tree_sitter_python.language())
 _PARSER = tree_sitter.Parser()
