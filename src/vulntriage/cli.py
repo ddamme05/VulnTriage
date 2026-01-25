@@ -1,7 +1,7 @@
 """CLI entry point for VulnTriage."""
 
 from pathlib import Path
-from typing import Annotated
+from typing import TYPE_CHECKING, Annotated
 
 import typer
 from rich.console import Console
@@ -9,7 +9,9 @@ from rich.table import Table
 
 from vulntriage import __version__
 from vulntriage.triage import triage
-from vulntriage.models import ScanResult
+
+if TYPE_CHECKING:
+    from vulntriage.models import ScanResult
 
 app = typer.Typer(
     name="vulntriage",
@@ -41,7 +43,7 @@ def scan(
             file_okay=False,
             readable=True,
         ),
-    ] = Path("."),
+    ] = Path(),
     include_tests: Annotated[
         bool,
         typer.Option(
@@ -64,6 +66,20 @@ def scan(
             help="Fail closed: prevent dismissals if any files were skipped.",
         ),
     ] = False,
+    enrich: Annotated[
+        bool,
+        typer.Option(
+            "--enrich/--no-enrich",
+            help="Enrich with EPSS/KEV threat intelligence.",
+        ),
+    ] = True,
+    prioritize_risk: Annotated[
+        bool,
+        typer.Option(
+            "--prioritize-risk",
+            help="Sort by KEV/EPSS instead of severity.",
+        ),
+    ] = False,
 ) -> None:
     """Scan source code for reachable vulnerabilities.
 
@@ -76,10 +92,23 @@ def scan(
         console.print(f"  Source path:  [cyan]{src}[/]")
         if strict:
             console.print("  Mode:         [yellow]--strict[/]")
+        if prioritize_risk:
+            console.print("  Sorting:      [yellow]--prioritize-risk[/]")
+        if prioritize_risk and not enrich:
+            console.print(
+                "[yellow]⚠ Warning: --prioritize-risk has no effect without enrichment.[/]"
+            )
         console.print()
 
     # Run the triage pipeline
-    results = triage(trivy_json, src, include_tests=include_tests, strict=strict)
+    results = triage(
+        trivy_json,
+        src,
+        include_tests=include_tests,
+        strict=strict,
+        enrich=enrich,
+        prioritize_risk=prioritize_risk,
+    )
 
     if not results:
         if json_output:
@@ -104,6 +133,9 @@ def _output_json(results: list["ScanResult"]) -> None:
             "installed_version": r.vulnerability.installed_version,
             "fixed_version": r.vulnerability.fixed_version,
             "severity": r.vulnerability.severity,
+            "cvss_score": r.vulnerability.cvss_score,
+            "epss_score": r.vulnerability.epss_score,
+            "is_kev": r.vulnerability.is_kev,
             "status": r.status,
             "reason": r.reason,
             "evidence": [
@@ -139,6 +171,8 @@ def _output_table(results: list["ScanResult"]) -> None:
     table.add_column("Severity", width=10)
     table.add_column("CVE", width=18)
     table.add_column("Package")
+    table.add_column("KEV", width=4)
+    table.add_column("EPSS", width=6)
     table.add_column("Evidence")
 
     status_styles = {
@@ -160,16 +194,20 @@ def _output_table(results: list["ScanResult"]) -> None:
         severity_display = severity_styles.get(r.vulnerability.severity, r.vulnerability.severity)
 
         # Format evidence
-        if r.evidence:
-            evidence_str = f"{len(r.evidence)} call(s)"
-        else:
-            evidence_str = "-"
+        evidence_str = f"{len(r.evidence)} call(s)" if r.evidence else "-"
+
+        # Format KEV/EPSS
+        kev_display = "[red bold]🔥[/]" if r.vulnerability.is_kev else ""
+        epss = r.vulnerability.epss_score
+        epss_display = f"{epss:.1%}" if epss is not None else "-"
 
         table.add_row(
             status_display,
             severity_display,
             r.vulnerability.vuln_id,
             f"{r.vulnerability.pkg_name}@{r.vulnerability.installed_version}",
+            kev_display,
+            epss_display,
             evidence_str,
         )
 
