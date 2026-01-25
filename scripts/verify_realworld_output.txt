@@ -1,0 +1,72 @@
+=== VulnTriage Real-World Verification ===
+Project root: /home/ddamme05/projects/VulnTriage
+
+PyGoat has 102 vulnerabilities
+
+=== Trivy Report Sample (first 10 vulnerabilities) ===
+CVE-2024-22195         Jinja2             MEDIUM     3.1.2
+CVE-2024-34064         Jinja2             MEDIUM     3.1.2
+CVE-2024-56201         Jinja2             MEDIUM     3.1.2
+CVE-2024-56326         Jinja2             MEDIUM     3.1.2
+CVE-2025-27516         Jinja2             MEDIUM     3.1.2
+CVE-2024-34069         Werkzeug           HIGH       2.3.7
+CVE-2023-46136         Werkzeug           MEDIUM     2.3.7
+CVE-2024-49766         Werkzeug           MEDIUM     2.3.7
+CVE-2024-49767         Werkzeug           MEDIUM     2.3.7
+CVE-2025-66221         Werkzeug           MEDIUM     2.3.7
+
+=== Running VulnTriage (3 runs for determinism) ===
+
+--- Run 1 ---
+  Results: 102 vulnerabilities
+     actionable   CRITICAL   CVE-2019-20477         PyYAML          evidence=2
+     actionable   CRITICAL   CVE-2020-14343         PyYAML          evidence=2
+     actionable   CRITICAL   CVE-2020-1747          PyYAML          evidence=2
+     actionable   CRITICAL   CVE-2023-31047         django          evidence=697
+     actionable   CRITICAL   CVE-2023-31047         Django          evidence=697
+  ...
+
+--- Run 2 ---
+  Results: 102 vulnerabilities
+     actionable   CRITICAL   CVE-2019-20477         PyYAML          evidence=2
+     actionable   CRITICAL   CVE-2020-14343         PyYAML          evidence=2
+     actionable   CRITICAL   CVE-2020-1747          PyYAML          evidence=2
+     actionable   CRITICAL   CVE-2023-31047         django          evidence=697
+     actionable   CRITICAL   CVE-2023-31047         Django          evidence=697
+  ...
+
+--- Run 3 ---
+  Results: 102 vulnerabilities
+     actionable   CRITICAL   CVE-2019-20477         PyYAML          evidence=2
+     actionable   CRITICAL   CVE-2020-14343         PyYAML          evidence=2
+     actionable   CRITICAL   CVE-2020-1747          PyYAML          evidence=2
+     actionable   CRITICAL   CVE-2023-31047         django          evidence=697
+     actionable   CRITICAL   CVE-2023-31047         Django          evidence=697
+  ...
+
+=== Comparing Outputs ===
+✅ PASSED: All 3 runs produced identical output
+
+=== Testing Risk-Based Sorting (--prioritize-risk) ===
+
+--- Default sort ---
+     CRITICAL   EPSS:     -  CVE-2019-20477         actionable
+     CRITICAL   EPSS:     -  CVE-2020-14343         actionable
+     CRITICAL   EPSS:     -  CVE-2020-1747          actionable
+     CRITICAL   EPSS:     -  CVE-2023-31047         actionable
+     CRITICAL   EPSS:     -  CVE-2023-31047         actionable
+
+--- Risk sort ---
+     MEDIUM     EPSS: 12.5%  CVE-2023-32681         actionable
+     MEDIUM     EPSS: 12.5%  CVE-2023-32681         actionable
+     MEDIUM     EPSS:  0.7%  CVE-2024-0727          dismissed
+     CRITICAL   EPSS:     -  CVE-2019-20477         actionable
+     CRITICAL   EPSS:     -  CVE-2020-14343         actionable
+
+=== Summary ===
+Total vulnerabilities: 102
+  🔴 Actionable:   55
+  🟡 Needs Review: 24
+  🟢 Dismissed:    23
+
+=== All Tests Passed ===

@@ -1,0 +1,93 @@
+{
+    "SchemaVersion": 2,
+    "CreatedAt": "2026-01-25T00:00:00Z",
+    "ArtifactName": "pygoat-simulated",
+    "ArtifactType": "filesystem",
+    "Results": [
+        {
+            "Target": "requirements.txt",
+            "Class": "lang-pkgs",
+            "Type": "pip",
+            "Vulnerabilities": [
+                {
+                    "VulnerabilityID": "CVE-2021-44228",
+                    "PkgName": "log4j",
+                    "InstalledVersion": "2.14.0",
+                    "FixedVersion": "2.17.0",
+                    "Severity": "CRITICAL",
+                    "Title": "Apache Log4j2 Remote Code Execution"
+                },
+                {
+                    "VulnerabilityID": "CVE-2023-44487",
+                    "PkgName": "aiohttp",
+                    "InstalledVersion": "3.8.0",
+                    "FixedVersion": "3.8.6",
+                    "Severity": "HIGH",
+                    "Title": "HTTP/2 Rapid Reset Attack"
+                },
+                {
+                    "VulnerabilityID": "CVE-2022-42969",
+                    "PkgName": "py",
+                    "InstalledVersion": "1.10.0",
+                    "FixedVersion": "1.11.0",
+                    "Severity": "HIGH",
+                    "Title": "ReDoS via svnwc.py"
+                },
+                {
+                    "VulnerabilityID": "CVE-2023-32681",
+                    "PkgName": "requests",
+                    "InstalledVersion": "2.28.0",
+                    "FixedVersion": "2.31.0",
+                    "Severity": "MEDIUM",
+                    "Title": "Unintended leak of Proxy-Authorization header"
+                },
+                {
+                    "VulnerabilityID": "CVE-2023-37920",
+                    "PkgName": "certifi",
+                    "InstalledVersion": "2023.5.7",
+                    "FixedVersion": "2023.7.22",
+                    "Severity": "HIGH",
+                    "Title": "Removal of e-Tugra root certificate"
+                },
+                {
+                    "VulnerabilityID": "CVE-2023-39417",
+                    "PkgName": "werkzeug",
+                    "InstalledVersion": "2.2.0",
+                    "FixedVersion": "2.3.7",
+                    "Severity": "MEDIUM",
+                    "Title": "Open redirect vulnerability"
+                },
+                {
+                    "VulnerabilityID": "CVE-2023-30861",
+                    "PkgName": "flask",
+                    "InstalledVersion": "2.2.0",
+                    "FixedVersion": "2.3.2",
+                    "Severity": "HIGH",
+                    "Title": "Cookie leakage vulnerability"
+                },
+                {
+                    "VulnerabilityID": "CVE-2024-3094",
+                    "PkgName": "xz",
+                    "InstalledVersion": "5.6.0",
+                    "FixedVersion": "5.6.2",
+                    "Severity": "CRITICAL",
+                    "Title": "XZ Utils Backdoor"
+                },
+                {
+                    "VulnerabilityID": "CVE-2023-45853",
+                    "PkgName": "zlib",
+                    "InstalledVersion": "1.2.13",
+                    "Severity": "CRITICAL",
+                    "Title": "Integer overflow in MiniZip"
+                },
+                {
+                    "VulnerabilityID": "CVE-2023-99999",
+                    "PkgName": "unknown-pkg",
+                    "InstalledVersion": "1.0.0",
+                    "Severity": "LOW",
+                    "Title": "Fake CVE for testing"
+                }
+            ]
+        }
+    ]
+}

@@ -1,0 +1,79 @@
+=== VulnTriage Determinism Verification ===
+Project root: /home/ddamme05/projects/VulnTriage
+
+--- Run 1 ---
+--- Run 2 ---
+--- Run 3 ---
+
+=== Comparing Outputs ===
+✅ PASSED: All 3 runs produced identical output
+
+Output sample (first run):
+[
+  {
+    "vuln_id": "CVE-2021-44228",
+    "pkg_name": "log4j",
+    "installed_version": "2.14.0",
+    "fixed_version": null,
+    "severity": "CRITICAL",
+    "cvss_score": null,
+    "epss_score": 0.97548,
+    "is_kev": true,
+    "status": "needs_review",
+    "reason": "Unknown package mapping for 'log4j'",
+    "evidence": []
+  },
+  {
+    "vuln_id": "CVE-2023-00002",
+    "pkg_name": "flask",
+    "installed_version": "2.0.0",
+    "fixed_version": null,
+    "severity": "CRITICAL",
+    "cvss_score": null,
+    "epss_score": null,
+    "is_kev": false,
+    "status": "actionable",
+    "reason": "Found 1 call(s) to 'flask'",
+    "evidence": [
+      {
+        "file_path": "/tmp/tmp.tggZUoupcf/src/app.py",
+        "line_start": 5,
+        "line_end": 5,
+        "symbol_name": "flask.Flask"
+      }
+    ]
+  },
+  {
+    "vuln_id": "CVE-2023-00001",
+    "pkg_name": "requests",
+    "installed_version": "2.28.0",
+    "fixed_version": null,
+    "severity": "HIGH",
+    "cvss_score": null,
+    "epss_score": null,
+    "is_kev": false,
+    "status": "actionable",
+    "reason": "Found 1 call(s) to 'requests'",
+    "evidence": [
+      {
+        "file_path": "/tmp/tmp.tggZUoupcf/src/app.py",
+        "line_start": 6,
+        "line_end": 6,
+        "symbol_name": "requests.get"
+      }
+    ]
+  },
+  {
+    "vuln_id": "CVE-2023-00003",
+    "pkg_name": "urllib3",
+    "installed_version": "1.26.0",
+    "fixed_version": null,
+    "severity": "MEDIUM",
+    "cvss_score": null,
+    "epss_score": null,
+    "is_kev": false,
+    "status": "dismissed",
+    "reason": "Package 'urllib3' is not imported in any application code",
+    "evidence": []
+  }
+]
