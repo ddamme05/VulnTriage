@@ -8,6 +8,7 @@ from rich.console import Console
 from rich.table import Table
 
 from vulntriage import __version__
+from vulntriage.enrichment import refresh_epss_data, refresh_kev_data
 from vulntriage.triage import triage
 
 if TYPE_CHECKING:
@@ -73,6 +74,33 @@ def scan(
             help="Enrich with EPSS/KEV threat intelligence.",
         ),
     ] = True,
+    epss_file: Annotated[
+        Path | None,
+        typer.Option(
+            "--epss-file",
+            help="Use custom EPSS CSV file.",
+            exists=True,
+            dir_okay=False,
+            readable=True,
+        ),
+    ] = None,
+    kev_file: Annotated[
+        Path | None,
+        typer.Option(
+            "--kev-file",
+            help="Use custom KEV JSON file.",
+            exists=True,
+            dir_okay=False,
+            readable=True,
+        ),
+    ] = None,
+    refresh: Annotated[
+        bool,
+        typer.Option(
+            "--refresh",
+            help="Download latest EPSS/KEV data before scan.",
+        ),
+    ] = False,
     prioritize_risk: Annotated[
         bool,
         typer.Option(
@@ -100,6 +128,27 @@ def scan(
             )
         console.print()
 
+    if refresh and not enrich:
+        msg = "⚠ Warning: --refresh ignored because enrichment is disabled."
+        if json_output:
+            typer.echo(msg, err=True)
+        else:
+            console.print(f"[yellow]{msg}[/]")
+        refresh = False
+
+    if refresh and (epss_file or kev_file):
+        msg = "⚠ Warning: --refresh ignored because custom data source was provided."
+        if json_output:
+            typer.echo(msg, err=True)
+        else:
+            console.print(f"[yellow]{msg}[/]")
+        refresh = False
+
+    if refresh:
+        with console.status("[bold]Refreshing threat intelligence...[/]"):
+            refresh_epss_data()
+            refresh_kev_data()
+
     # Run the triage pipeline
     results = triage(
         trivy_json,
@@ -107,6 +156,9 @@ def scan(
         include_tests=include_tests,
         strict=strict,
         enrich=enrich,
+        epss_file=epss_file,
+        kev_file=kev_file,
+        refresh=False,
         prioritize_risk=prioritize_risk,
     )
 

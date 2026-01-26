@@ -7,6 +7,8 @@ import csv
 import gzip
 import json
 import re
+import shutil
+import urllib.request
 from datetime import datetime, timedelta
 from pathlib import Path
 from typing import TYPE_CHECKING
@@ -17,8 +19,13 @@ if TYPE_CHECKING:
 # Cache directory for downloaded data
 CACHE_DIR = Path.home() / ".cache" / "vulntriage"
 
-# Data staleness threshold
-MAX_DATA_AGE_DAYS = 7
+# Data staleness thresholds
+EPSS_TTL_DAYS = 3
+KEV_TTL_DAYS = 7
+
+# Data sources
+EPSS_URL = "https://epss.cyentia.com/epss_scores-current.csv.gz"
+KEV_URL = "https://www.cisa.gov/sites/default/files/feeds/known_exploited_vulnerabilities.json"
 
 # CVE ID normalization pattern
 CVE_PATTERN = re.compile(r"(CVE)[- ]?(\d{4})[- ]?(\d+)", re.IGNORECASE)
@@ -27,8 +34,9 @@ CVE_PATTERN = re.compile(r"(CVE)[- ]?(\d{4})[- ]?(\d+)", re.IGNORECASE)
 def get_cache_dir() -> Path:
     """Get or create the cache directory.
 
-    Returns CACHE_DIR if it can be created/accessed, otherwise None.
-    Falls back to bundled data if cache isn't available.
+    Returns CACHE_DIR if it can be created/accessed, otherwise the path
+    (callers should check .exists()). Falls back to bundled data if cache
+    isn't available.
     """
     try:
         CACHE_DIR.mkdir(parents=True, exist_ok=True)
@@ -98,6 +106,8 @@ def _get_last_updated(data_type: str) -> datetime | None:
 def _set_last_updated(data_type: str) -> None:
     """Set the last updated timestamp for a data file."""
     cache_dir = get_cache_dir()
+    if not cache_dir.exists():
+        return
     meta_file = cache_dir / "metadata.json"
 
     meta: dict[str, str] = {}
@@ -109,12 +119,184 @@ def _set_last_updated(data_type: str) -> None:
     meta_file.write_text(json.dumps(meta, indent=2), encoding="utf-8")
 
 
-def is_data_stale(data_type: str, max_age_days: int = MAX_DATA_AGE_DAYS) -> bool:
+def is_data_stale(data_type: str, max_age_days: int) -> bool:
     """Check if cached data is stale."""
     last_updated = _get_last_updated(data_type)
     if last_updated is None:
         return True
     return datetime.now() - last_updated > timedelta(days=max_age_days)
+
+
+def _warn_if_stale(data_type: str, max_age_days: int) -> None:
+    """Warn if cached data is stale."""
+    last_updated = _get_last_updated(data_type)
+    if last_updated is None:
+        import warnings
+        warnings.warn(
+            f"Cached {data_type.upper()} data has no timestamp; run --refresh to update.",
+            stacklevel=2,
+        )
+        return
+
+    age = datetime.now() - last_updated
+    if age > timedelta(days=max_age_days):
+        import warnings
+        warnings.warn(
+            f"Cached {data_type.upper()} data is {age.days} day(s) old "
+            f"(last updated {last_updated.date()}). Run --refresh to update.",
+            stacklevel=2,
+        )
+
+
+def _validate_epss_header_from_gzip(path: Path) -> None:
+    """Validate EPSS CSV header inside a gzip file."""
+    with gzip.open(path, "rt", encoding="utf-8") as f:
+        header = f.readline().strip().lower()
+    if "cve" not in header or "epss" not in header:
+        raise ValueError("Invalid EPSS header in gzip file")
+
+
+def _validate_epss_header_from_csv(path: Path) -> None:
+    """Validate EPSS CSV header from a plain CSV file."""
+    with path.open("r", encoding="utf-8") as f:
+        header = f.readline().strip().lower()
+    if "cve" not in header or "epss" not in header:
+        raise ValueError("Invalid EPSS header in CSV file")
+
+
+def _validate_kev_json(path: Path) -> None:
+    """Validate KEV JSON schema minimal shape."""
+    data = json.loads(path.read_text(encoding="utf-8"))
+    if "vulnerabilities" not in data:
+        raise ValueError("Invalid KEV JSON schema (missing vulnerabilities key)")
+
+
+def _load_epss_from_path(path: Path) -> dict[str, float]:
+    """Load EPSS data from a validated CSV or CSV.GZ path."""
+    _validate_epss_header_from_gzip(path) if path.suffix == ".gz" else _validate_epss_header_from_csv(path)
+
+    epss_data: dict[str, float] = {}
+
+    if path.suffix == ".gz":
+        with gzip.open(path, "rt", encoding="utf-8") as f:
+            reader = csv.DictReader(f)
+            for row in reader:
+                cve_raw = row.get("cve", "")
+                epss_raw = row.get("epss", "")
+                cve_id = normalize_cve_id(cve_raw)
+                if cve_id and epss_raw:
+                    with contextlib.suppress(ValueError):
+                        epss_data[cve_id] = float(epss_raw)
+    else:
+        with path.open("r", encoding="utf-8") as f:
+            reader = csv.DictReader(f)
+            for row in reader:
+                cve_raw = row.get("cve", "")
+                epss_raw = row.get("epss", "")
+                cve_id = normalize_cve_id(cve_raw)
+                if cve_id and epss_raw:
+                    with contextlib.suppress(ValueError):
+                        epss_data[cve_id] = float(epss_raw)
+
+    return epss_data
+
+
+def _load_kev_from_path(path: Path) -> set[str]:
+    """Load KEV data from a validated JSON path."""
+    _validate_kev_json(path)
+
+    kev_data: set[str] = set()
+    data = json.loads(path.read_text(encoding="utf-8"))
+    vulnerabilities = data.get("vulnerabilities", [])
+    for vuln in vulnerabilities:
+        cve_raw = vuln.get("cveID", "")
+        cve_id = normalize_cve_id(cve_raw)
+        if cve_id:
+            kev_data.add(cve_id)
+
+    return kev_data
+
+
+def _download_to_temp(url: str, temp_path: Path) -> None:
+    """Download a URL to a temporary path."""
+    with urllib.request.urlopen(url, timeout=30) as response:
+        if hasattr(response, "status") and response.status >= 400:
+            raise ValueError(f"Download failed with status {response.status}")
+        with temp_path.open("wb") as out:
+            shutil.copyfileobj(response, out)
+
+
+def refresh_epss_data(dest_path: Path | None = None, url: str = EPSS_URL) -> Path | None:
+    """Download and refresh EPSS data into cache (atomic update)."""
+    cache_dir = get_cache_dir()
+    if not cache_dir.exists():
+        import warnings
+        warnings.warn("Cache directory unavailable; skipping EPSS refresh.", stacklevel=2)
+        return None
+
+    if dest_path is None:
+        dest_path = cache_dir / "epss.csv"
+    else:
+        dest_path.parent.mkdir(parents=True, exist_ok=True)
+
+    gz_temp = dest_path.with_suffix(dest_path.suffix + ".tmp.gz")
+    csv_temp = dest_path.with_suffix(dest_path.suffix + ".tmp")
+
+    try:
+        _download_to_temp(url, gz_temp)
+        _validate_epss_header_from_gzip(gz_temp)
+
+        with gzip.open(gz_temp, "rt", encoding="utf-8") as src, csv_temp.open(
+            "w", encoding="utf-8"
+        ) as dst:
+            shutil.copyfileobj(src, dst)
+
+        _validate_epss_header_from_csv(csv_temp)
+        csv_temp.replace(dest_path)
+        _set_last_updated("epss")
+        return dest_path
+    except Exception as e:
+        import warnings
+        warnings.warn(f"Failed to refresh EPSS data: {e}", stacklevel=2)
+        return None
+    finally:
+        with contextlib.suppress(OSError):
+            if gz_temp.exists():
+                gz_temp.unlink()
+        with contextlib.suppress(OSError):
+            if csv_temp.exists():
+                csv_temp.unlink()
+
+
+def refresh_kev_data(dest_path: Path | None = None, url: str = KEV_URL) -> Path | None:
+    """Download and refresh KEV data into cache (atomic update)."""
+    cache_dir = get_cache_dir()
+    if not cache_dir.exists():
+        import warnings
+        warnings.warn("Cache directory unavailable; skipping KEV refresh.", stacklevel=2)
+        return None
+
+    if dest_path is None:
+        dest_path = cache_dir / "kev.json"
+    else:
+        dest_path.parent.mkdir(parents=True, exist_ok=True)
+
+    temp_path = dest_path.with_suffix(dest_path.suffix + ".tmp")
+
+    try:
+        _download_to_temp(url, temp_path)
+        _validate_kev_json(temp_path)
+        temp_path.replace(dest_path)
+        _set_last_updated("kev")
+        return dest_path
+    except Exception as e:
+        import warnings
+        warnings.warn(f"Failed to refresh KEV data: {e}", stacklevel=2)
+        return None
+    finally:
+        with contextlib.suppress(OSError):
+            if temp_path.exists():
+                temp_path.unlink()
 
 
 def load_epss_data(custom_path: Path | None = None) -> dict[str, float]:
@@ -130,49 +312,51 @@ def load_epss_data(custom_path: Path | None = None) -> dict[str, float]:
     """
     epss_data: dict[str, float] = {}
 
-    # Determine which file to load
-    path: Path | None = None
+    if custom_path is not None:
+        if not custom_path.exists():
+            import warnings
+            warnings.warn(
+                f"EPSS file not found at {custom_path}. Enrichment will be incomplete.",
+                stacklevel=2,
+            )
+            return epss_data
+        try:
+            return _load_epss_from_path(custom_path)
+        except Exception as e:
+            import warnings
+            warnings.warn(
+                f"Failed to load EPSS data from {custom_path}: {e}",
+                stacklevel=2,
+            )
+            return epss_data
 
-    if custom_path and custom_path.exists():
-        path = custom_path
-    else:
-        cache_path = get_cache_dir() / "epss.csv"
-        path = cache_path if cache_path.exists() else _get_bundled_data_path("epss_sample.csv")
+    cache_path = get_cache_dir() / "epss.csv"
+    if cache_path.exists():
+        _warn_if_stale("epss", EPSS_TTL_DAYS)
+        try:
+            return _load_epss_from_path(cache_path)
+        except Exception as e:
+            import warnings
+            warnings.warn(
+                f"Failed to load cached EPSS data from {cache_path}: {e}",
+                stacklevel=2,
+            )
 
-    if path is None:
+    bundled_path = _get_bundled_data_path("epss_sample.csv")
+    if bundled_path is None:
         import warnings
         warnings.warn("No EPSS data available. Enrichment will be incomplete.", stacklevel=2)
         return epss_data
 
     try:
-        # Handle gzipped files
-        if path.suffix == ".gz":
-            with gzip.open(path, "rt", encoding="utf-8") as f:
-                reader = csv.DictReader(f)
-                for row in reader:
-                    cve_raw = row.get("cve", "")
-                    epss_raw = row.get("epss", "")
-                    cve_id = normalize_cve_id(cve_raw)
-                    if cve_id and epss_raw:
-                        try:
-                            epss_data[cve_id] = float(epss_raw)
-                        except ValueError:
-                            pass  # Skip invalid scores
-        else:
-            with path.open("r", encoding="utf-8") as f:
-                reader = csv.DictReader(f)
-                for row in reader:
-                    cve_raw = row.get("cve", "")
-                    epss_raw = row.get("epss", "")
-                    cve_id = normalize_cve_id(cve_raw)
-                    if cve_id and epss_raw:
-                        with contextlib.suppress(ValueError):
-                            epss_data[cve_id] = float(epss_raw)
+        return _load_epss_from_path(bundled_path)
     except Exception as e:
         import warnings
-        warnings.warn(f"Failed to load EPSS data from {path}: {e}", stacklevel=2)
-
-    return epss_data
+        warnings.warn(
+            f"Failed to load bundled EPSS data from {bundled_path}: {e}",
+            stacklevel=2,
+        )
+        return epss_data
 
 
 def load_kev_data(custom_path: Path | None = None) -> set[str]:
@@ -188,33 +372,51 @@ def load_kev_data(custom_path: Path | None = None) -> set[str]:
     """
     kev_data: set[str] = set()
 
-    # Determine which file to load
-    path: Path | None = None
+    if custom_path is not None:
+        if not custom_path.exists():
+            import warnings
+            warnings.warn(
+                f"KEV file not found at {custom_path}. Enrichment will be incomplete.",
+                stacklevel=2,
+            )
+            return kev_data
+        try:
+            return _load_kev_from_path(custom_path)
+        except Exception as e:
+            import warnings
+            warnings.warn(
+                f"Failed to load KEV data from {custom_path}: {e}",
+                stacklevel=2,
+            )
+            return kev_data
 
-    if custom_path and custom_path.exists():
-        path = custom_path
-    else:
-        cache_path = get_cache_dir() / "kev.json"
-        path = cache_path if cache_path.exists() else _get_bundled_data_path("kev.json")
+    cache_path = get_cache_dir() / "kev.json"
+    if cache_path.exists():
+        _warn_if_stale("kev", KEV_TTL_DAYS)
+        try:
+            return _load_kev_from_path(cache_path)
+        except Exception as e:
+            import warnings
+            warnings.warn(
+                f"Failed to load cached KEV data from {cache_path}: {e}",
+                stacklevel=2,
+            )
 
-    if path is None:
+    bundled_path = _get_bundled_data_path("kev.json")
+    if bundled_path is None:
         import warnings
         warnings.warn("No KEV data available. Enrichment will be incomplete.", stacklevel=2)
         return kev_data
 
     try:
-        data = json.loads(path.read_text(encoding="utf-8"))
-        vulnerabilities = data.get("vulnerabilities", [])
-        for vuln in vulnerabilities:
-            cve_raw = vuln.get("cveID", "")
-            cve_id = normalize_cve_id(cve_raw)
-            if cve_id:
-                kev_data.add(cve_id)
+        return _load_kev_from_path(bundled_path)
     except Exception as e:
         import warnings
-        warnings.warn(f"Failed to load KEV data from {path}: {e}", stacklevel=2)
-
-    return kev_data
+        warnings.warn(
+            f"Failed to load bundled KEV data from {bundled_path}: {e}",
+            stacklevel=2,
+        )
+        return kev_data
 
 
 def enrich_vulnerability(

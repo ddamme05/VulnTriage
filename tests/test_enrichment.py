@@ -1,8 +1,12 @@
 """Tests for EPSS/KEV enrichment module."""
 
+import gzip
+import io
 import json
-import tempfile
+from datetime import datetime
 from pathlib import Path
+
+import pytest
 
 from vulntriage.enrichment import (
     enrich_vulnerabilities,
@@ -12,6 +16,8 @@ from vulntriage.enrichment import (
     load_epss_data,
     load_kev_data,
     normalize_cve_id,
+    refresh_epss_data,
+    refresh_kev_data,
 )
 from vulntriage.models import Vulnerability
 
@@ -48,23 +54,20 @@ def test_normalize_cve_invalid() -> None:
 # --- EPSS Loading Tests ---
 
 
-def test_load_epss_from_csv() -> None:
+def test_load_epss_from_csv(tmp_path: Path) -> None:
     """Load EPSS data from CSV file."""
-    with tempfile.NamedTemporaryFile(
-        mode="w", suffix=".csv", delete=False
-    ) as f:
-        f.write("cve,epss,percentile\n")
-        f.write("CVE-2023-12345,0.5,0.95\n")
-        f.write("cve-2023-99999,0.01,0.50\n")
-        path = Path(f.name)
+    path = tmp_path / "epss.csv"
+    path.write_text(
+        "cve,epss,percentile\n"
+        "CVE-2023-12345,0.5,0.95\n"
+        "cve-2023-99999,0.01,0.50\n",
+        encoding="utf-8",
+    )
 
-    try:
-        data = load_epss_data(path)
-        assert len(data) == 2
-        assert data["CVE-2023-12345"] == 0.5
-        assert data["CVE-2023-99999"] == 0.01
-    finally:
-        path.unlink()
+    data = load_epss_data(path)
+    assert len(data) == 2
+    assert data["CVE-2023-12345"] == 0.5
+    assert data["CVE-2023-99999"] == 0.01
 
 
 def test_load_epss_missing_file() -> None:
@@ -79,29 +82,49 @@ def test_load_epss_missing_file() -> None:
     assert data == {} or len(data) >= 0  # May have bundled fallback
 
 
-def test_load_epss_invalid_score() -> None:
+def test_load_epss_invalid_score(tmp_path: Path) -> None:
     """Invalid EPSS scores should be skipped."""
-    with tempfile.NamedTemporaryFile(
-        mode="w", suffix=".csv", delete=False
-    ) as f:
-        f.write("cve,epss,percentile\n")
-        f.write("CVE-2023-12345,0.5,0.95\n")
-        f.write("CVE-2023-99999,invalid,0.50\n")  # Invalid score
-        path = Path(f.name)
+    path = tmp_path / "epss_invalid.csv"
+    path.write_text(
+        "cve,epss,percentile\n"
+        "CVE-2023-12345,0.5,0.95\n"
+        "CVE-2023-99999,invalid,0.50\n",
+        encoding="utf-8",
+    )
 
-    try:
-        data = load_epss_data(path)
-        assert len(data) == 1
-        assert "CVE-2023-12345" in data
-        assert "CVE-2023-99999" not in data
-    finally:
-        path.unlink()
+    data = load_epss_data(path)
+    assert len(data) == 1
+    assert "CVE-2023-12345" in data
+    assert "CVE-2023-99999" not in data
+
+
+def test_load_epss_invalid_cache_falls_back_to_bundled(tmp_path: Path, monkeypatch) -> None:
+    """Invalid cached EPSS should fall back to bundled data."""
+    import vulntriage.enrichment as enrichment
+
+    cache_dir = tmp_path / "cache"
+    cache_dir.mkdir()
+    (cache_dir / "epss.csv").write_text("bad,header\n", encoding="utf-8")
+    (cache_dir / "metadata.json").write_text(
+        json.dumps({"epss_updated": datetime.now().isoformat()}),
+        encoding="utf-8",
+    )
+
+    bundled = tmp_path / "epss_sample.csv"
+    bundled.write_text("cve,epss\nCVE-2023-12345,0.5\n", encoding="utf-8")
+
+    monkeypatch.setattr(enrichment, "CACHE_DIR", cache_dir)
+    monkeypatch.setattr(enrichment, "_get_bundled_data_path", lambda _: bundled)
+
+    with pytest.warns(UserWarning, match="Failed to load cached EPSS data"):
+        data = enrichment.load_epss_data()
+    assert data.get("CVE-2023-12345") == 0.5
 
 
 # --- KEV Loading Tests ---
 
 
-def test_load_kev_from_json() -> None:
+def test_load_kev_from_json(tmp_path: Path) -> None:
     """Load KEV data from JSON file."""
     kev_json = {
         "vulnerabilities": [
@@ -110,19 +133,13 @@ def test_load_kev_from_json() -> None:
         ]
     }
 
-    with tempfile.NamedTemporaryFile(
-        mode="w", suffix=".json", delete=False
-    ) as f:
-        json.dump(kev_json, f)
-        path = Path(f.name)
+    path = tmp_path / "kev.json"
+    path.write_text(json.dumps(kev_json), encoding="utf-8")
 
-    try:
-        data = load_kev_data(path)
-        assert len(data) == 2
-        assert "CVE-2023-12345" in data
-        assert "CVE-2023-99999" in data
-    finally:
-        path.unlink()
+    data = load_kev_data(path)
+    assert len(data) == 2
+    assert "CVE-2023-12345" in data
+    assert "CVE-2023-99999" in data
 
 
 def test_load_kev_missing_file() -> None:
@@ -135,6 +152,32 @@ def test_load_kev_missing_file() -> None:
 
     # Should return empty set or bundled data, not crash
     assert isinstance(data, set)
+
+
+def test_load_kev_invalid_cache_falls_back_to_bundled(tmp_path: Path, monkeypatch) -> None:
+    """Invalid cached KEV should fall back to bundled data."""
+    import vulntriage.enrichment as enrichment
+
+    cache_dir = tmp_path / "cache"
+    cache_dir.mkdir()
+    (cache_dir / "kev.json").write_text(json.dumps({"bad": []}), encoding="utf-8")
+    (cache_dir / "metadata.json").write_text(
+        json.dumps({"kev_updated": datetime.now().isoformat()}),
+        encoding="utf-8",
+    )
+
+    bundled = tmp_path / "kev.json"
+    bundled.write_text(
+        json.dumps({"vulnerabilities": [{"cveID": "CVE-2023-12345"}]}),
+        encoding="utf-8",
+    )
+
+    monkeypatch.setattr(enrichment, "CACHE_DIR", cache_dir)
+    monkeypatch.setattr(enrichment, "_get_bundled_data_path", lambda _: bundled)
+
+    with pytest.warns(UserWarning, match="Failed to load cached KEV data"):
+        data = enrichment.load_kev_data()
+    assert "CVE-2023-12345" in data
 
 
 # --- Enrichment Tests ---
@@ -179,7 +222,7 @@ def test_enrich_vulnerability_not_in_data() -> None:
     assert enriched.is_kev is False
 
 
-def test_enrich_vulnerabilities_list() -> None:
+def test_enrich_vulnerabilities_list(tmp_path: Path) -> None:
     """Enrich a list of vulnerabilities."""
     vulns = [
         Vulnerability(
@@ -196,31 +239,25 @@ def test_enrich_vulnerabilities_list() -> None:
         ),
     ]
 
-    # Create temp files
-    with tempfile.NamedTemporaryFile(
-        mode="w", suffix=".csv", delete=False
-    ) as f:
-        f.write("cve,epss,percentile\n")
-        f.write("CVE-2023-12345,0.80,0.98\n")
-        epss_path = Path(f.name)
+    epss_path = tmp_path / "epss.csv"
+    epss_path.write_text(
+        "cve,epss,percentile\nCVE-2023-12345,0.80,0.98\n",
+        encoding="utf-8",
+    )
 
-    with tempfile.NamedTemporaryFile(
-        mode="w", suffix=".json", delete=False
-    ) as f:
-        json.dump({"vulnerabilities": [{"cveID": "CVE-2023-12345"}]}, f)
-        kev_path = Path(f.name)
+    kev_path = tmp_path / "kev.json"
+    kev_path.write_text(
+        json.dumps({"vulnerabilities": [{"cveID": "CVE-2023-12345"}]}),
+        encoding="utf-8",
+    )
 
-    try:
-        enriched = enrich_vulnerabilities(vulns, epss_path, kev_path)
+    enriched = enrich_vulnerabilities(vulns, epss_path, kev_path)
 
-        assert len(enriched) == 2
-        assert enriched[0].epss_score == 0.80
-        assert enriched[0].is_kev is True
-        assert enriched[1].epss_score is None
-        assert enriched[1].is_kev is False
-    finally:
-        epss_path.unlink()
-        kev_path.unlink()
+    assert len(enriched) == 2
+    assert enriched[0].epss_score == 0.80
+    assert enriched[0].is_kev is True
+    assert enriched[1].epss_score is None
+    assert enriched[1].is_kev is False
 
 
 # --- Cache Tests ---
@@ -236,4 +273,111 @@ def test_cache_dir_created() -> None:
 def test_is_data_stale_no_metadata() -> None:
     """Data is considered stale if no metadata exists."""
     # Use a unique data type to avoid interference
-    assert is_data_stale("test_nonexistent_type_xyz")
+    assert is_data_stale("test_nonexistent_type_xyz", 3)
+
+
+# --- Refresh Tests ---
+
+
+class _FakeResponse(io.BytesIO):
+    """Minimal file-like response for urlopen mocking."""
+
+    def __enter__(self) -> "_FakeResponse":
+        return self
+
+    def __exit__(self, exc_type, exc, tb) -> None:
+        self.close()
+
+    @property
+    def status(self) -> int:
+        return 200
+
+
+def test_refresh_epss_data_writes_cache(tmp_path: Path, monkeypatch) -> None:
+    """refresh_epss_data should download and write epss.csv in cache."""
+    import vulntriage.enrichment as enrichment
+
+    monkeypatch.setattr(enrichment, "CACHE_DIR", tmp_path / "cache")
+
+    csv_data = "cve,epss\nCVE-2023-12345,0.5\n"
+    gz_bytes = gzip.compress(csv_data.encode("utf-8"))
+
+    monkeypatch.setattr(
+        enrichment.urllib.request,
+        "urlopen",
+        lambda url, timeout=30: _FakeResponse(gz_bytes),
+    )
+
+    path = refresh_epss_data()
+    assert path is not None
+    assert path.exists()
+    header = path.read_text(encoding="utf-8").splitlines()[0].lower()
+    assert "cve" in header and "epss" in header
+
+
+def test_refresh_epss_data_invalid_header(tmp_path: Path, monkeypatch) -> None:
+    """Invalid EPSS header should be rejected."""
+    import warnings
+    import vulntriage.enrichment as enrichment
+
+    monkeypatch.setattr(enrichment, "CACHE_DIR", tmp_path / "cache")
+
+    csv_data = "foo,bar\n"
+    gz_bytes = gzip.compress(csv_data.encode("utf-8"))
+
+    monkeypatch.setattr(
+        enrichment.urllib.request,
+        "urlopen",
+        lambda url, timeout=30: _FakeResponse(gz_bytes),
+    )
+
+    with warnings.catch_warnings(record=True) as w:
+        warnings.simplefilter("always")
+        path = refresh_epss_data()
+    assert path is None
+    assert w
+
+
+def test_refresh_kev_data_writes_cache(tmp_path: Path, monkeypatch) -> None:
+    """refresh_kev_data should download and write kev.json in cache."""
+    import vulntriage.enrichment as enrichment
+
+    monkeypatch.setattr(enrichment, "CACHE_DIR", tmp_path / "cache")
+
+    kev_payload = {"vulnerabilities": [{"cveID": "CVE-2023-12345"}]}
+    kev_bytes = json.dumps(kev_payload).encode("utf-8")
+
+    monkeypatch.setattr(
+        enrichment.urllib.request,
+        "urlopen",
+        lambda url, timeout=30: _FakeResponse(kev_bytes),
+    )
+
+    path = refresh_kev_data()
+    assert path is not None
+    assert path.exists()
+    data = json.loads(path.read_text(encoding="utf-8"))
+    assert "vulnerabilities" in data
+
+
+def test_refresh_kev_data_invalid_schema(tmp_path: Path, monkeypatch) -> None:
+    """Invalid KEV schema should be rejected."""
+    import warnings
+    import vulntriage.enrichment as enrichment
+
+    monkeypatch.setattr(enrichment, "CACHE_DIR", tmp_path / "cache")
+
+    kev_payload = {"not_vulnerabilities": []}
+    kev_bytes = json.dumps(kev_payload).encode("utf-8")
+
+    monkeypatch.setattr(
+        enrichment.urllib.request,
+        "urlopen",
+        lambda url, timeout=30: _FakeResponse(kev_bytes),
+    )
+
+    with warnings.catch_warnings(record=True) as w:
+        warnings.simplefilter("always")
+        path = refresh_kev_data()
+    assert path is None
+    assert w

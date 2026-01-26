@@ -5,7 +5,7 @@ from __future__ import annotations
 from pathlib import Path
 
 from .analyzer import find_call_sites
-from .enrichment import enrich_vulnerabilities
+from .enrichment import enrich_vulnerabilities, refresh_epss_data, refresh_kev_data
 from .matcher import FileAnalysis, match_vulnerabilities
 from .models import ScanResult
 from .package_map import build_package_map
@@ -19,6 +19,9 @@ def triage(
     include_tests: bool = False,
     strict: bool = False,
     enrich: bool = True,
+    epss_file: Path | None = None,
+    kev_file: Path | None = None,
+    refresh: bool = False,
     prioritize_risk: bool = False,
 ) -> list[ScanResult]:
     """Run the full vulnerability triage pipeline.
@@ -37,6 +40,9 @@ def triage(
         include_tests: If True, include test files in analysis.
         strict: If True, prevent dismissals when any files were skipped.
         enrich: If True, enrich vulnerabilities with EPSS/KEV data.
+        epss_file: Optional custom EPSS CSV path.
+        kev_file: Optional custom KEV JSON path.
+        refresh: If True, refresh cached EPSS/KEV data before enrichment.
         prioritize_risk: If True, sort by KEV/EPSS instead of severity.
 
     Returns:
@@ -50,7 +56,23 @@ def triage(
 
     # Stage 2: Enrich with EPSS/KEV (optional)
     if enrich:
-        vulnerabilities = enrich_vulnerabilities(vulnerabilities)
+        if refresh and (epss_file or kev_file):
+            import warnings
+            warnings.warn(
+                "--refresh ignored because custom data source was provided.",
+                stacklevel=2,
+            )
+            refresh = False
+
+        if refresh:
+            refresh_epss_data()
+            refresh_kev_data()
+
+        vulnerabilities = enrich_vulnerabilities(
+            vulnerabilities,
+            epss_path=epss_file,
+            kev_path=kev_file,
+        )
 
     # Stage 3: Build package map
     package_to_modules = build_package_map()
