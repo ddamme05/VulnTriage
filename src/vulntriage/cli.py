@@ -321,9 +321,9 @@ def _output_table(results: list["ScanResult"]) -> None:
 
     # Summary
     console.print(f"[bold]Found {len(results)} vulnerabilities:[/]")
-    console.print(f"  🔴 Actionable:   [red bold]{status_counts['actionable']}[/]")
-    console.print(f"  🟡 Needs Review: [yellow]{status_counts['needs_review']}[/]")
-    console.print(f"  🟢 Dismissed:    [green]{status_counts['dismissed']}[/]")
+    console.print(f"  Actionable:   [red bold]{status_counts['actionable']}[/]")
+    console.print(f"  Needs Review: [yellow]{status_counts['needs_review']}[/]")
+    console.print(f"  Dismissed:    [green]{status_counts['dismissed']}[/]")
     console.print()
 
     # Build table
@@ -358,7 +358,7 @@ def _output_table(results: list["ScanResult"]) -> None:
         evidence_str = f"{len(r.evidence)} call(s)" if r.evidence else "-"
 
         # Format KEV/EPSS
-        kev_display = "[red bold]🔥[/]" if r.vulnerability.is_kev else ""
+        kev_display = "[red bold]Y[/]" if r.vulnerability.is_kev else ""
         epss = r.vulnerability.epss_score
         epss_display = f"{epss:.1%}" if epss is not None else "-"
 
