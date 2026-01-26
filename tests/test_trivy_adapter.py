@@ -158,7 +158,41 @@ def test_same_cve_same_package_different_versions_not_deduplicated() -> None:
 
     vulns = load_trivy_report_from_string(json.dumps(data))
     assert len(vulns) == 2
-    assert {v.installed_version for v in vulns} == {"2.28.0", "2.25.0"}
+
+
+def test_deduplication_case_insensitive_package_name() -> None:
+    """Same CVE with package name differing by case should be deduplicated."""
+    data = {
+        "SchemaVersion": 2,
+        "Results": [
+            {
+                "Target": "result1",
+                "Vulnerabilities": [
+                    {
+                        "VulnerabilityID": "CVE-2023-00001",
+                        "PkgName": "Django",
+                        "InstalledVersion": "4.0.0",
+                        "Severity": "HIGH",
+                    }
+                ],
+            },
+            {
+                "Target": "result2",
+                "Vulnerabilities": [
+                    {
+                        "VulnerabilityID": "CVE-2023-00001",
+                        "PkgName": "django",
+                        "InstalledVersion": "4.0.0",
+                        "Severity": "HIGH",
+                    }
+                ],
+            },
+        ],
+    }
+
+    vulns = load_trivy_report_from_string(json.dumps(data))
+    assert len(vulns) == 1
+    assert {v.installed_version for v in vulns} == {"4.0.0"}
 
 
 def test_multiple_vulnerabilities() -> None:

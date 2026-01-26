@@ -9,6 +9,7 @@ from typing import Any
 from pydantic import BaseModel, Field
 
 from .models import Vulnerability
+from .package_map import canonicalize_package_name
 
 
 class TrivyVulnerability(BaseModel):
@@ -95,7 +96,11 @@ def _extract_vulnerabilities(report: TrivyReport) -> list[Vulnerability]:
 
         for vuln in result.Vulnerabilities:
             # Deduplicate by (CVE ID, package name, version)
-            key = (vuln.VulnerabilityID, vuln.PkgName, vuln.InstalledVersion)
+            key = (
+                vuln.VulnerabilityID,
+                canonicalize_package_name(vuln.PkgName),
+                vuln.InstalledVersion,
+            )
             if key in seen_keys:
                 continue
             seen_keys.add(key)
