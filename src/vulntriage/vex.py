@@ -31,10 +31,10 @@ def _purl_for(name: str, version: str | None) -> str:
     return f"pkg:pypi/{normalized}"
 
 
-def build_vex(results: list[ScanResult]) -> dict:
+def build_vex(results: list[ScanResult]) -> dict[str, object]:
     """Build a CycloneDX VEX JSON document from scan results."""
-    components: dict[str, dict] = {}
-    vulnerabilities: list[dict] = []
+    components: dict[str, dict[str, object]] = {}
+    vulnerabilities: list[dict[str, object]] = []
     seen: set[tuple[str, str]] = set()
 
     for result in results:
