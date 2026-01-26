@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from pathlib import Path
+from typing import TYPE_CHECKING
 
 from .analyzer import find_call_sites
 from .cve_function_map import load_cve_function_map
@@ -12,6 +13,11 @@ from .models import ScanResult
 from .package_map import build_package_map
 from .scanner import scan_directory
 from .trivy_adapter import load_trivy_report
+
+if TYPE_CHECKING:
+    from rich.console import Console
+
+    from .ai_analyst import AIConfig
 
 
 def triage(
@@ -25,6 +31,8 @@ def triage(
     refresh: bool = False,
     prioritize_risk: bool = False,
     cve_function_map_file: Path | None = None,
+    ai_config: "AIConfig | None" = None,
+    console: "Console | None" = None,
 ) -> list[ScanResult]:
     """Run the full vulnerability triage pipeline.
 
@@ -34,7 +42,8 @@ def triage(
     3. Scan source directory to build symbol tables
     4. Find call sites in each file
     5. Match vulnerabilities against call sites
-    6. Return classified results
+    6. (Optional) AI analysis for non-dismissed results
+    7. Return classified results
 
     Args:
         trivy_json: Path to Trivy JSON report.
@@ -47,6 +56,8 @@ def triage(
         refresh: If True, refresh cached EPSS/KEV data before enrichment.
         prioritize_risk: If True, sort by KEV/EPSS instead of severity.
         cve_function_map_file: Optional CVE function map JSON path.
+        ai_config: Optional AI configuration (if None or disabled, no AI analysis).
+        console: Optional Rich console for progress output.
 
     Returns:
         List of ScanResult objects with classification and evidence.
@@ -127,7 +138,7 @@ def triage(
         skipped_count = len(scan_result.skipped_files)
         results = _apply_strict_mode(results, skipped_count)
 
-    # Stage 7: Sort results
+    # Stage 7: Sort results (before AI so candidates are prioritized)
     severity_order = {"CRITICAL": 0, "HIGH": 1, "MEDIUM": 2, "LOW": 3, "UNKNOWN": 4}
 
     if prioritize_risk:
@@ -147,6 +158,13 @@ def triage(
             severity_order.get(r.vulnerability.severity, 5),
             r.vulnerability.vuln_id,
         ))
+
+    # Stage 8: AI analysis (optional, advisory only)
+    # AI is NEVER run for dismissed findings (explicit skip policy).
+    # The --ai-limit applies only to actionable/needs_review.
+    if ai_config and ai_config.enabled:
+        from .ai_analyst import apply_ai_analysis
+        results = apply_ai_analysis(results, ai_config, console)
 
     return results
 

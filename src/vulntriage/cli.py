@@ -8,6 +8,7 @@ from rich.console import Console
 from rich.table import Table
 
 from vulntriage import __version__
+from vulntriage.ai_analyst import AIConfig
 from vulntriage.enrichment import refresh_epss_data, refresh_kev_data
 from vulntriage.triage import triage
 from vulntriage.vex import write_vex
@@ -127,12 +128,83 @@ def scan(
             readable=True,
         ),
     ] = None,
+    # AI analysis flags (all optional, default off)
+    ai: Annotated[
+        bool,
+        typer.Option(
+            "--ai/--no-ai",
+            help="Enable AI exploitability analysis (requires OPENAI_API_KEY).",
+        ),
+    ] = False,
+    ai_model: Annotated[
+        str,
+        typer.Option(
+            "--ai-model",
+            help="LLM model for AI analysis.",
+        ),
+    ] = "gpt-4o-mini",
+    ai_timeout: Annotated[
+        int,
+        typer.Option(
+            "--ai-timeout",
+            help="Timeout for AI analysis in seconds.",
+        ),
+    ] = 30,
+    ai_max_tokens: Annotated[
+        int,
+        typer.Option(
+            "--ai-max-tokens",
+            help="Maximum tokens for AI response.",
+        ),
+    ] = 900,
+    ai_limit: Annotated[
+        int,
+        typer.Option(
+            "--ai-limit",
+            help="Maximum CVEs to analyze with AI per run.",
+        ),
+    ] = 25,
+    ai_context_lines: Annotated[
+        int,
+        typer.Option(
+            "--ai-context-lines",
+            help="Total lines of code context for AI (split before/after).",
+        ),
+    ] = 50,
+    ai_redact: Annotated[
+        bool,
+        typer.Option(
+            "--ai-redact/--no-ai-redact",
+            help="Redact secrets from code before sending to AI.",
+        ),
+    ] = True,
+    ai_cache: Annotated[
+        Path | None,
+        typer.Option(
+            "--ai-cache",
+            help="File path for AI response cache (enables caching).",
+        ),
+    ] = None,
 ) -> None:
     """Scan source code for reachable vulnerabilities.
 
     Analyzes the Trivy report against your source code to determine
     which vulnerabilities are actually reachable and exploitable.
     """
+    # Build AI config if enabled
+    ai_config: AIConfig | None = None
+    if ai:
+        ai_config = AIConfig(
+            enabled=True,
+            model=ai_model,
+            timeout=ai_timeout,
+            max_tokens=ai_max_tokens,
+            limit=ai_limit,
+            context_lines=ai_context_lines,
+            redact=ai_redact,
+            cache_path=ai_cache,
+        )
+
     if not json_output:
         console.print("[bold blue]VulnTriage[/] - Reachability Analysis")
         console.print(f"  Trivy report: [cyan]{trivy_json}[/]")
@@ -141,6 +213,8 @@ def scan(
             console.print("  Mode:         [yellow]--strict[/]")
         if prioritize_risk:
             console.print("  Sorting:      [yellow]--prioritize-risk[/]")
+        if ai_config:
+            console.print(f"  AI analysis:  [magenta]--ai (limit={ai_limit})[/]")
         if prioritize_risk and not enrich:
             console.print(
                 "[yellow]⚠ Warning: --prioritize-risk has no effect without enrichment.[/]"
@@ -180,6 +254,8 @@ def scan(
         refresh=False,
         prioritize_risk=prioritize_risk,
         cve_function_map_file=cve_function_map,
+        ai_config=ai_config,
+        console=console if not json_output else None,
     )
 
     if output_vex:
@@ -200,9 +276,9 @@ def scan(
 
 def _output_json(results: list["ScanResult"]) -> None:
     """Output results as JSON."""
-    output = []
+    output: list[dict[str, object]] = []
     for r in results:
-        output.append({
+        result_dict: dict[str, object] = {
             "vuln_id": r.vulnerability.vuln_id,
             "pkg_name": r.vulnerability.pkg_name,
             "installed_version": r.vulnerability.installed_version,
@@ -222,7 +298,17 @@ def _output_json(results: list["ScanResult"]) -> None:
                 }
                 for e in r.evidence
             ] if r.evidence else [],
-        })
+        }
+        # Include AI analysis if present
+        if r.ai_analysis:
+            result_dict["ai_analysis"] = {
+                "is_exploitable": r.ai_analysis.is_exploitable,
+                "confidence": r.ai_analysis.confidence,
+                "reasoning": r.ai_analysis.reasoning,
+                "cited_lines": r.ai_analysis.cited_lines,
+                "suggested_fix": r.ai_analysis.suggested_fix,
+            }
+        output.append(result_dict)
     console.print_json(data=output)
 
 
