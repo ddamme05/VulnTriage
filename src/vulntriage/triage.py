@@ -5,6 +5,7 @@ from __future__ import annotations
 from pathlib import Path
 
 from .analyzer import find_call_sites
+from .cve_function_map import load_cve_function_map
 from .enrichment import enrich_vulnerabilities, refresh_epss_data, refresh_kev_data
 from .matcher import FileAnalysis, match_vulnerabilities
 from .models import ScanResult
@@ -23,6 +24,7 @@ def triage(
     kev_file: Path | None = None,
     refresh: bool = False,
     prioritize_risk: bool = False,
+    cve_function_map_file: Path | None = None,
 ) -> list[ScanResult]:
     """Run the full vulnerability triage pipeline.
 
@@ -44,6 +46,7 @@ def triage(
         kev_file: Optional custom KEV JSON path.
         refresh: If True, refresh cached EPSS/KEV data before enrichment.
         prioritize_risk: If True, sort by KEV/EPSS instead of severity.
+        cve_function_map_file: Optional CVE function map JSON path.
 
     Returns:
         List of ScanResult objects with classification and evidence.
@@ -111,10 +114,12 @@ def triage(
         )
 
     # Stage 6: Match vulnerabilities
+    cve_function_map = load_cve_function_map(cve_function_map_file)
     results = match_vulnerabilities(
         vulnerabilities,
         analysis_map,
         package_to_modules,
+        cve_function_map,
     )
 
     # Strict mode: if any files were skipped, prevent dismissals

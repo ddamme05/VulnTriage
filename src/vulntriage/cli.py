@@ -117,6 +117,16 @@ def scan(
             dir_okay=False,
         ),
     ] = None,
+    cve_function_map: Annotated[
+        Path | None,
+        typer.Option(
+            "--cve-function-map",
+            help="CVE→function map JSON for function-level matching.",
+            exists=True,
+            dir_okay=False,
+            readable=True,
+        ),
+    ] = None,
 ) -> None:
     """Scan source code for reachable vulnerabilities.
 
@@ -169,6 +179,7 @@ def scan(
         kev_file=kev_file,
         refresh=False,
         prioritize_risk=prioritize_risk,
+        cve_function_map_file=cve_function_map,
     )
 
     if output_vex:

@@ -6,6 +6,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import TYPE_CHECKING
 
+from .cve_function_map import get_vulnerable_functions, matches_vulnerable_function
 from .models import EvidenceRef, ScanResult, TriageStatus, Vulnerability
 from .package_map import canonicalize_package_name
 
@@ -47,6 +48,7 @@ def match_vulnerabilities(
     vulnerabilities: list[Vulnerability],
     analysis_map: dict[Path, FileAnalysis],
     package_to_modules: dict[str, list[str]],
+    cve_function_map: dict[str, set[str]] | None = None,
 ) -> list[ScanResult]:
     """Match vulnerabilities against discovered call sites.
 
@@ -56,6 +58,8 @@ def match_vulnerabilities(
             All paths should be consistently relative (or consistently absolute)
             to ensure stable evidence paths across machines/CI.
         package_to_modules: Mapping of canonicalized package names to module names.
+        cve_function_map: Optional mapping of CVE IDs to vulnerable functions.
+            When provided, actionable requires matching a vulnerable function.
 
     Returns:
         List of ScanResult objects (the canonical output type).
@@ -128,10 +132,35 @@ def match_vulnerabilities(
             status = "needs_review"
             reason = f"Package '{vuln.pkg_name}' is imported but no direct calls found"
         else:
-            # TODO: After AI analysis, downgrade to "needs_review" if model says
-            # "not exploitable / unclear." Only keep "actionable" for confirmed exploitable.
-            status = "actionable"
-            reason = f"Found {len(matching_calls)} call(s) to '{vuln.pkg_name}'"
+            # Check CVE-specific function matching if map provided
+            vuln_functions = None
+            if cve_function_map:
+                vuln_functions = get_vulnerable_functions(vuln.vuln_id, cve_function_map)
+
+            if vuln_functions is not None:
+                # Filter calls to only those matching vulnerable functions
+                filtered_calls: set[tuple[Path, int, str]] = set()
+                for path, line, callee in matching_calls:
+                    if matches_vulnerable_function(callee, vuln_functions):
+                        filtered_calls.add((path, line, callee))
+
+                if filtered_calls:
+                    status = "actionable"
+                    matched_fns = ", ".join(sorted(vuln_functions)[:3])
+                    reason = f"Found {len(filtered_calls)} call(s) to vulnerable function(s): {matched_fns}"
+                    matching_calls = filtered_calls
+                else:
+                    # Has function map but no matching calls - needs_review (safety-first)
+                    status = "needs_review"
+                    reason = (
+                        f"Package '{vuln.pkg_name}' is called but not via known vulnerable functions "
+                        f"({', '.join(sorted(vuln_functions)[:3])})"
+                    )
+            else:
+                # No function map for this CVE - use existing behavior
+                status = "actionable"
+                reason = f"Found {len(matching_calls)} call(s) to '{vuln.pkg_name}'"
+
             # Sort evidence for deterministic output (file path, line, callee)
             for path, line, callee in sorted(matching_calls):
                 evidence.append(EvidenceRef(
