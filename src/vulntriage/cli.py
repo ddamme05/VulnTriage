@@ -10,6 +10,7 @@ from rich.table import Table
 from vulntriage import __version__
 from vulntriage.enrichment import refresh_epss_data, refresh_kev_data
 from vulntriage.triage import triage
+from vulntriage.vex import write_vex
 
 if TYPE_CHECKING:
     from vulntriage.models import ScanResult
@@ -108,6 +109,14 @@ def scan(
             help="Sort by KEV/EPSS instead of severity.",
         ),
     ] = False,
+    output_vex: Annotated[
+        Path | None,
+        typer.Option(
+            "--output-vex",
+            help="Write CycloneDX VEX JSON to PATH.",
+            dir_okay=False,
+        ),
+    ] = None,
 ) -> None:
     """Scan source code for reachable vulnerabilities.
 
@@ -161,6 +170,9 @@ def scan(
         refresh=False,
         prioritize_risk=prioritize_risk,
     )
+
+    if output_vex:
+        write_vex(results, output_vex)
 
     if not results:
         if json_output:
