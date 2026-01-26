@@ -86,14 +86,18 @@ COMMON_MATCHING_PACKAGES: list[str] = [
     "jsonschema",
     "httpx",
     "httpcore",
+    "sqlparse",
     "toml",
     "tomli",
+    "werkzeug",
+    "zipp",
 ]
 
 
 # Common manual overrides for packages where metadata is unreliable
 # Keys are NOT canonicalized here - canonicalization happens in build_package_map()
 PACKAGE_OVERRIDES: dict[str, list[str]] = {
+    "django-allauth": ["allauth"],
     "PyYAML": ["yaml", "_yaml"],
     "Pillow": ["PIL"],
     "beautifulsoup4": ["bs4"],
