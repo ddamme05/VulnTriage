@@ -5,28 +5,30 @@
 
 **Reachability-focused vulnerability triage for Python projects.**
 
-VulnTriage bridges the gap between "vulnerable package" and "exploitable code" by
-checking for static usage evidence in your codebase. It turns a long scanner report
-into a smaller, auditable set of actionable findings.
+VulnTriage turns a long scanner report into a smaller, auditable set of findings by
+checking for **static usage evidence** in your codebase. It does not change scanner
+results; it classifies them into **actionable**, **needs_review**, or **dismissed**
+with evidence and reasons you can inspect.
 
-## What it does
+> **Python-only for now.** VulnTriage uses tree-sitter for AST parsing; other language
+> grammars (Go, JavaScript, Java, etc.) are not yet integrated.
 
-- Parses your Trivy JSON report and deduplicates findings
-- Scans your source code for imports and call sites (Tree-sitter)
-- Classifies each CVE as `actionable`, `needs_review`, or `dismissed`
-- Enriches with EPSS/KEV for risk-based sorting (offline-first)
-- Optional CycloneDX VEX export
-- Optional AI advisory analysis (does not change classification)
+## Why this exists
 
-## What it does not do
+Scanner output is noisy. VulnTriage focuses on **evidence-backed reachability**,
+so teams can prioritize fixes that are actually relevant to their code.
 
-| Claim | Reality |
-|-------|---------|
-| Full exploitability analysis | We detect static usage, not runtime reachability |
-| Runtime telemetry | No execution traces, instrumentation, or profiling |
-| 100% accurate package mapping | Namespace packages and edge cases exist |
-| Replacement for security review | We filter noise; humans make final decisions |
-| SAST/DAST tool | We triage scanner output, not scan for new vulns |
+## Standout features
+
+- **Evidence-based classification**: imports + call sites drive status
+- **Fail-closed by default**: uncertainty → `needs_review`, never auto-dismissed
+- **Offline-first**: no network calls unless you explicitly refresh or enable AI
+- **Threat intel enrichment**: EPSS/KEV for risk-aware ordering (cache + refresh)
+- **Strict mode**: prevents dismissals if any files are skipped
+- **VEX exports**: CycloneDX VEX 1.5 and OpenVEX 0.2.0
+- **Optional function-level matching**: CVE → function map (opt-in)
+- **Optional AI advisory**: analysis only, never changes classification
+- **Deterministic output**: stable JSON for CI/diffing
 
 ## Quickstart
 
@@ -42,11 +44,94 @@ trivy fs . --format json --output trivy.json
 uv run vulntriage scan --trivy-json trivy.json --src .
 ```
 
-### 3) Optional: risk-based sorting
+### 3) Risk-based sorting (optional)
 
 ```bash
 uv run vulntriage scan --trivy-json trivy.json --src . --prioritize-risk
 ```
+
+## Usage cookbook
+
+### Minimal scan
+
+```bash
+uv run vulntriage scan --trivy-json trivy.json --src .
+```
+
+### JSON output (CI-friendly)
+
+```bash
+uv run vulntriage scan --trivy-json trivy.json --src . --json > results.json
+```
+
+### Fail-closed strict mode
+
+```bash
+uv run vulntriage scan --trivy-json trivy.json --src . --strict
+```
+
+### Offline-first workflow (security posture)
+
+1) **Online refresh (one-time):**
+
+```bash
+uv run vulntriage scan --trivy-json trivy.json --src . --refresh
+```
+
+2) **Offline runs (no network):**
+
+```bash
+uv run vulntriage scan --trivy-json trivy.json --src . --offline
+```
+
+Offline guard:
+- `--offline` (CLI flag)
+- `VULNTRIAGE_OFFLINE=1` (environment variable)
+
+Both prevent refresh/network calls and fail fast if a refresh is attempted.
+
+### Custom EPSS/KEV files
+
+```bash
+uv run vulntriage scan --trivy-json trivy.json --src . \
+  --epss-file /path/to/epss.csv \
+  --kev-file /path/to/kev.json
+```
+
+### CycloneDX VEX export
+
+```bash
+uv run vulntriage scan --trivy-json trivy.json --src . --output-vex out.vex.json
+```
+
+### OpenVEX export
+
+```bash
+uv run vulntriage scan --trivy-json trivy.json --src . --output-openvex out.openvex.json
+```
+
+### CVE function matching (opt-in)
+
+```bash
+uv run vulntriage scan --trivy-json trivy.json --src . \
+  --cve-function-map path/to/map.json
+```
+
+Bundled seed map (opt-in, community-contributed):
+`src/vulntriage/data/cve_functions.json`
+
+### AI advisory (optional)
+
+```bash
+export OPENAI_API_KEY="sk-..."
+uv run vulntriage scan --trivy-json trivy.json --src . --ai --ai-limit 25
+```
+
+Controls:
+- `--ai-limit N` caps cost per run
+- `--ai-context-lines N` controls snippet size
+- `--ai-cache PATH` enables caching
+- `--ai-redact/--no-ai-redact` toggles secret redaction
 
 ## Example output
 
@@ -69,68 +154,14 @@ Found 30 vulnerabilities:
 └──────────────┴────────────┴────────────────────┴───────────────┴───────────┘
 ```
 
-## Core features
+## What it does not do
 
-- **Tree-sitter parsing**: Fast, fault-tolerant import and call site detection
-- **Package name resolution**: Handles PyPI to import mapping (e.g., `Pillow` -> `PIL`)
-- **Alias resolution**: Tracks `import X as Y` and `from X import Y` patterns
-- **Wildcard/dynamic import detection**: Flags `from X import *` and `importlib.import_module()`
-- **Fail-closed safety**: Uncertain findings default to `needs_review`, never auto-dismissed
-- **Deterministic output**: Stable JSON for CI and diffing
-
-## Enrichment and prioritization
-
-- **EPSS/KEV enrichment** (offline-first)
-  - Bundled fallback data
-  - Cache + `--refresh` to update
-  - Custom data paths with `--epss-file` and `--kev-file`
-- **Risk sorting**: `--prioritize-risk`
-  - KEV first, then EPSS (if present), then severity
-
-## VEX export
-
-Produce CycloneDX VEX 1.5 output:
-
-```bash
-uv run vulntriage scan --trivy-json trivy.json --src . --output-vex out.vex.json
-```
-
-## Function-level matching (optional)
-
-Use a CVE -> function map to require a vulnerable function call before marking `actionable`.
-
-```bash
-uv run vulntriage scan --trivy-json trivy.json --src . --cve-function-map path/to/map.json
-```
-
-Safety-first behavior:
-- If a map exists and a matching call is found -> `actionable`
-- If a map exists but no match -> `needs_review` (never auto-dismissed)
-- If no map exists -> current behavior unchanged
-
-## AI advisory (optional)
-
-AI analysis is advisory only. It never changes classification.
-
-```bash
-export OPENAI_API_KEY="sk-..."
-uv run vulntriage scan --trivy-json trivy.json --src . --ai --ai-limit 25
-```
-
-Controls:
-- `--ai-limit N` caps cost per run
-- `--ai-context-lines N` controls snippet size
-- `--ai-cache PATH` enables caching
-- `--ai-redact/--no-ai-redact` toggles secret redaction
-
-## CLI overview
-
-```bash
-uv run vulntriage --help
-uv run vulntriage scan --help
-uv run vulntriage scan --json
-uv run vulntriage scan --strict
-```
+| Claim | Reality |
+|-------|---------|
+| Full exploitability analysis | Static usage evidence only (not runtime reachability) |
+| Runtime telemetry | No instrumentation, tracing, or profiling |
+| Replace security review | It reduces noise; humans decide risk |
+| SAST/DAST | It triages existing scanner output |
 
 ## Requirements
 
