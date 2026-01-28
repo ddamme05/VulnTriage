@@ -1,5 +1,6 @@
 """CLI entry point for VulnTriage."""
 
+import os
 from pathlib import Path
 from typing import TYPE_CHECKING, Annotated
 
@@ -12,6 +13,7 @@ from vulntriage.ai_analyst import AIConfig
 from vulntriage.enrichment import refresh_epss_data, refresh_kev_data
 from vulntriage.triage import triage
 from vulntriage.vex import write_vex
+from vulntriage.openvex import write_openvex
 
 if TYPE_CHECKING:
     from vulntriage.models import ScanResult
@@ -22,6 +24,11 @@ app = typer.Typer(
     no_args_is_help=True,
 )
 console = Console()
+
+
+def _env_bool(name: str) -> bool:
+    """Parse a boolean environment variable."""
+    return os.getenv(name, "").strip().lower() in {"1", "true", "yes", "on"}
 
 
 @app.command()
@@ -103,6 +110,13 @@ def scan(
             help="Download latest EPSS/KEV data before scan.",
         ),
     ] = False,
+    offline: Annotated[
+        bool,
+        typer.Option(
+            "--offline",
+            help="Disable network access; refresh is not permitted.",
+        ),
+    ] = _env_bool("VULNTRIAGE_OFFLINE"),
     prioritize_risk: Annotated[
         bool,
         typer.Option(
@@ -115,6 +129,14 @@ def scan(
         typer.Option(
             "--output-vex",
             help="Write CycloneDX VEX JSON to PATH.",
+            dir_okay=False,
+        ),
+    ] = None,
+    output_openvex: Annotated[
+        Path | None,
+        typer.Option(
+            "--output-openvex",
+            help="Write OpenVEX JSON to PATH.",
             dir_okay=False,
         ),
     ] = None,
@@ -211,6 +233,8 @@ def scan(
         console.print(f"  Source path:  [cyan]{src}[/]")
         if strict:
             console.print("  Mode:         [yellow]--strict[/]")
+        if offline:
+            console.print("  Mode:         [yellow]--offline[/]")
         if prioritize_risk:
             console.print("  Sorting:      [yellow]--prioritize-risk[/]")
         if ai_config:
@@ -220,6 +244,9 @@ def scan(
                 "[yellow]⚠ Warning: --prioritize-risk has no effect without enrichment.[/]"
             )
         console.print()
+
+    if offline and refresh:
+        raise typer.BadParameter("--offline set: --refresh is not permitted.")
 
     if refresh and not enrich:
         msg = "⚠ Warning: --refresh ignored because enrichment is disabled."
@@ -252,6 +279,7 @@ def scan(
         epss_file=epss_file,
         kev_file=kev_file,
         refresh=False,
+        offline=offline,
         prioritize_risk=prioritize_risk,
         cve_function_map_file=cve_function_map,
         ai_config=ai_config,
@@ -260,6 +288,9 @@ def scan(
 
     if output_vex:
         write_vex(results, output_vex)
+
+    if output_openvex:
+        write_openvex(results, output_openvex)
 
     if not results:
         if json_output:

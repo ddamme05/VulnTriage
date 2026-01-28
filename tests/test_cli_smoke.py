@@ -97,3 +97,59 @@ def test_scan_output_vex(tmp_path: Path) -> None:
     assert result.returncode == 0
     assert vex_path.exists()
     assert "CycloneDX" in vex_path.read_text(encoding="utf-8")
+
+
+def test_scan_output_openvex(tmp_path: Path) -> None:
+    """Scan command writes an OpenVEX file when requested."""
+    trivy_json = {
+        "SchemaVersion": 2,
+        "Results": [
+            {
+                "Target": "requirements.txt",
+                "Type": "pip",
+                "Vulnerabilities": [
+                    {
+                        "VulnerabilityID": "CVE-2023-00001",
+                        "PkgName": "requests",
+                        "InstalledVersion": "2.28.0",
+                        "Severity": "HIGH",
+                    }
+                ],
+            }
+        ],
+    }
+
+    trivy_path = tmp_path / "trivy.json"
+    trivy_path.write_text(json.dumps(trivy_json), encoding="utf-8")
+
+    src_dir = tmp_path / "src"
+    src_dir.mkdir()
+    (src_dir / "app.py").write_text(
+        "import requests\nrequests.get('https://example.com')\n",
+        encoding="utf-8",
+    )
+
+    vex_path = tmp_path / "out.openvex.json"
+
+    result = subprocess.run(
+        [
+            "uv",
+            "run",
+            "vulntriage",
+            "scan",
+            "--trivy-json",
+            str(trivy_path),
+            "--src",
+            str(src_dir),
+            "--output-openvex",
+            str(vex_path),
+            "--json",
+        ],
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+
+    assert result.returncode == 0
+    assert vex_path.exists()
+    assert "openvex.dev" in vex_path.read_text(encoding="utf-8")
