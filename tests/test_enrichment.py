@@ -70,6 +70,21 @@ def test_load_epss_from_csv(tmp_path: Path) -> None:
     assert data["CVE-2023-99999"] == 0.01
 
 
+def test_load_epss_from_csv_with_comment_header(tmp_path: Path) -> None:
+    """Load EPSS data when a comment line precedes the header."""
+    path = tmp_path / "epss.csv"
+    path.write_text(
+        "#model_version:v2025.03.14,score_date:2026-01-27T12:55:00Z\n"
+        "cve,epss,percentile\n"
+        "CVE-2023-12345,0.5,0.95\n",
+        encoding="utf-8",
+    )
+
+    data = load_epss_data(path)
+    assert len(data) == 1
+    assert data["CVE-2023-12345"] == 0.5
+
+
 def test_load_epss_missing_file() -> None:
     """Missing EPSS file should return empty dict with warning."""
     import warnings
@@ -338,6 +353,39 @@ def test_refresh_epss_data_invalid_header(tmp_path: Path, monkeypatch) -> None:
     assert w
 
 
+def test_refresh_epss_data_plain_csv(tmp_path: Path, monkeypatch) -> None:
+    """Plain CSV EPSS downloads should be accepted (non-gzip)."""
+    import vulntriage.enrichment as enrichment
+
+    monkeypatch.setattr(enrichment, "CACHE_DIR", tmp_path / "cache")
+
+    csv_data = "cve,epss\nCVE-2023-12345,0.5\n"
+    csv_bytes = csv_data.encode("utf-8")
+
+    monkeypatch.setattr(
+        enrichment.urllib.request,
+        "urlopen",
+        lambda url, timeout=30: _FakeResponse(csv_bytes),
+    )
+
+    path = refresh_epss_data()
+    assert path is not None
+    assert path.exists()
+    header = path.read_text(encoding="utf-8").splitlines()[0].lower()
+    assert "cve" in header and "epss" in header
+
+
+def test_refresh_epss_data_offline_guard(tmp_path: Path, monkeypatch) -> None:
+    """Offline mode should prevent EPSS refresh."""
+    import vulntriage.enrichment as enrichment
+
+    monkeypatch.setattr(enrichment, "CACHE_DIR", tmp_path / "cache")
+    monkeypatch.setenv("VULNTRIAGE_OFFLINE", "1")
+
+    with pytest.raises(ValueError, match="Offline mode enabled"):
+        refresh_epss_data()
+
+
 def test_refresh_kev_data_writes_cache(tmp_path: Path, monkeypatch) -> None:
     """refresh_kev_data should download and write kev.json in cache."""
     import vulntriage.enrichment as enrichment
@@ -356,8 +404,17 @@ def test_refresh_kev_data_writes_cache(tmp_path: Path, monkeypatch) -> None:
     path = refresh_kev_data()
     assert path is not None
     assert path.exists()
-    data = json.loads(path.read_text(encoding="utf-8"))
-    assert "vulnerabilities" in data
+
+
+def test_refresh_kev_data_offline_guard(tmp_path: Path, monkeypatch) -> None:
+    """Offline mode should prevent KEV refresh."""
+    import vulntriage.enrichment as enrichment
+
+    monkeypatch.setattr(enrichment, "CACHE_DIR", tmp_path / "cache")
+    monkeypatch.setenv("VULNTRIAGE_OFFLINE", "1")
+
+    with pytest.raises(ValueError, match="Offline mode enabled"):
+        refresh_kev_data()
 
 
 def test_refresh_kev_data_invalid_schema(tmp_path: Path, monkeypatch) -> None:

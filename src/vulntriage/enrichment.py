@@ -6,9 +6,11 @@ import contextlib
 import csv
 import gzip
 import json
+import os
 import re
 import shutil
 import urllib.request
+from collections.abc import Iterable
 from datetime import datetime, timedelta
 from pathlib import Path
 from typing import TYPE_CHECKING
@@ -29,6 +31,11 @@ KEV_URL = "https://www.cisa.gov/sites/default/files/feeds/known_exploited_vulner
 
 # CVE ID normalization pattern
 CVE_PATTERN = re.compile(r"(CVE)[- ]?(\d{4})[- ]?(\d+)", re.IGNORECASE)
+
+
+def _offline_enabled() -> bool:
+    """Return True when offline mode is enabled via environment."""
+    return os.getenv("VULNTRIAGE_OFFLINE", "").strip().lower() in {"1", "true", "yes", "on"}
 
 
 def get_cache_dir() -> Path:
@@ -148,10 +155,20 @@ def _warn_if_stale(data_type: str, max_age_days: int) -> None:
         )
 
 
+def _first_epss_header_line(lines: Iterable[str]) -> str:
+    """Return the first non-empty, non-comment header line."""
+    for line in lines:
+        stripped = line.strip()
+        if not stripped or stripped.startswith("#"):
+            continue
+        return stripped.lower()
+    raise ValueError("EPSS header not found")
+
+
 def _validate_epss_header_from_gzip(path: Path) -> None:
     """Validate EPSS CSV header inside a gzip file."""
     with gzip.open(path, "rt", encoding="utf-8") as f:
-        header = f.readline().strip().lower()
+        header = _first_epss_header_line(f)
     if "cve" not in header or "epss" not in header:
         raise ValueError("Invalid EPSS header in gzip file")
 
@@ -159,9 +176,15 @@ def _validate_epss_header_from_gzip(path: Path) -> None:
 def _validate_epss_header_from_csv(path: Path) -> None:
     """Validate EPSS CSV header from a plain CSV file."""
     with path.open("r", encoding="utf-8") as f:
-        header = f.readline().strip().lower()
+        header = _first_epss_header_line(f)
     if "cve" not in header or "epss" not in header:
-        raise ValueError("Invalid EPSS header in CSV file")
+        raise ValueError(f"Invalid EPSS header in CSV file: {header!r}")
+
+
+def _is_gzip(path: Path) -> bool:
+    """Return True if a file starts with the gzip magic bytes."""
+    with path.open("rb") as f:
+        return f.read(2) == b"\x1f\x8b"
 
 
 def _validate_kev_json(path: Path) -> None:
@@ -179,7 +202,9 @@ def _load_epss_from_path(path: Path) -> dict[str, float]:
 
     if path.suffix == ".gz":
         with gzip.open(path, "rt", encoding="utf-8") as f:
-            reader = csv.DictReader(f)
+            reader = csv.DictReader(
+                (line for line in f if line.strip() and not line.lstrip().startswith("#"))
+            )
             for row in reader:
                 cve_raw = row.get("cve", "")
                 epss_raw = row.get("epss", "")
@@ -189,7 +214,9 @@ def _load_epss_from_path(path: Path) -> dict[str, float]:
                         epss_data[cve_id] = float(epss_raw)
     else:
         with path.open("r", encoding="utf-8") as f:
-            reader = csv.DictReader(f)
+            reader = csv.DictReader(
+                (line for line in f if line.strip() and not line.lstrip().startswith("#"))
+            )
             for row in reader:
                 cve_raw = row.get("cve", "")
                 epss_raw = row.get("epss", "")
@@ -219,6 +246,8 @@ def _load_kev_from_path(path: Path) -> set[str]:
 
 def _download_to_temp(url: str, temp_path: Path) -> None:
     """Download a URL to a temporary path."""
+    if _offline_enabled():
+        raise ValueError("Offline mode enabled; refresh not permitted.")
     with urllib.request.urlopen(url, timeout=30) as response:
         if hasattr(response, "status") and response.status >= 400:
             raise ValueError(f"Download failed with status {response.status}")
@@ -228,6 +257,8 @@ def _download_to_temp(url: str, temp_path: Path) -> None:
 
 def refresh_epss_data(dest_path: Path | None = None, url: str = EPSS_URL) -> Path | None:
     """Download and refresh EPSS data into cache (atomic update)."""
+    if _offline_enabled():
+        raise ValueError("Offline mode enabled; refresh not permitted.")
     cache_dir = get_cache_dir()
     if not cache_dir.exists():
         import warnings
@@ -244,12 +275,15 @@ def refresh_epss_data(dest_path: Path | None = None, url: str = EPSS_URL) -> Pat
 
     try:
         _download_to_temp(url, gz_temp)
-        _validate_epss_header_from_gzip(gz_temp)
-
-        with gzip.open(gz_temp, "rt", encoding="utf-8") as src, csv_temp.open(
-            "w", encoding="utf-8"
-        ) as dst:
-            shutil.copyfileobj(src, dst)
+        if _is_gzip(gz_temp):
+            _validate_epss_header_from_gzip(gz_temp)
+            with gzip.open(gz_temp, "rt", encoding="utf-8") as src, csv_temp.open(
+                "w", encoding="utf-8"
+            ) as dst:
+                shutil.copyfileobj(src, dst)
+        else:
+            _validate_epss_header_from_csv(gz_temp)
+            shutil.copyfile(gz_temp, csv_temp)
 
         _validate_epss_header_from_csv(csv_temp)
         csv_temp.replace(dest_path)
@@ -270,6 +304,8 @@ def refresh_epss_data(dest_path: Path | None = None, url: str = EPSS_URL) -> Pat
 
 def refresh_kev_data(dest_path: Path | None = None, url: str = KEV_URL) -> Path | None:
     """Download and refresh KEV data into cache (atomic update)."""
+    if _offline_enabled():
+        raise ValueError("Offline mode enabled; refresh not permitted.")
     cache_dir = get_cache_dir()
     if not cache_dir.exists():
         import warnings

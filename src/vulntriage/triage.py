@@ -29,6 +29,7 @@ def triage(
     epss_file: Path | None = None,
     kev_file: Path | None = None,
     refresh: bool = False,
+    offline: bool = False,
     prioritize_risk: bool = False,
     cve_function_map_file: Path | None = None,
     ai_config: "AIConfig | None" = None,
@@ -54,6 +55,7 @@ def triage(
         epss_file: Optional custom EPSS CSV path.
         kev_file: Optional custom KEV JSON path.
         refresh: If True, refresh cached EPSS/KEV data before enrichment.
+        offline: If True, disallow refresh/network operations.
         prioritize_risk: If True, sort by KEV/EPSS instead of severity.
         cve_function_map_file: Optional CVE function map JSON path.
         ai_config: Optional AI configuration (if None or disabled, no AI analysis).
@@ -70,6 +72,8 @@ def triage(
 
     # Stage 2: Enrich with EPSS/KEV (optional)
     if enrich:
+        if offline and refresh:
+            raise ValueError("Offline mode enabled; refresh not permitted.")
         if refresh and (epss_file or kev_file):
             import warnings
             warnings.warn(
