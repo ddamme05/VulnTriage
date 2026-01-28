@@ -2,6 +2,7 @@
 
 import json
 import tempfile
+from datetime import datetime
 from pathlib import Path
 
 from vulntriage.triage import triage
@@ -536,7 +537,7 @@ def test_enrichment_with_actionable_vulnerability() -> None:
         trivy_json.unlink()
 
 
-def test_prioritize_risk_kev_without_epss_vs_non_kev_with_epss() -> None:
+def test_prioritize_risk_kev_without_epss_vs_non_kev_with_epss(monkeypatch) -> None:
     """KEV without EPSS should sort before non-KEV with EPSS.
 
     This tests the edge case where:
@@ -564,6 +565,25 @@ def test_prioritize_risk_kev_without_epss_vs_non_kev_with_epss() -> None:
         with tempfile.TemporaryDirectory() as tmp:
             tmp_path = Path(tmp)
             create_source_file(tmp_path, "x = 1")
+
+            # Ensure deterministic EPSS/KEV data (ignore host cache).
+            import vulntriage.enrichment as enrichment
+
+            cache_dir = tmp_path / "cache"
+            cache_dir.mkdir()
+            (cache_dir / "epss.csv").write_text(
+                "cve,epss,percentile\nCVE-2023-32681,0.125,0.95\n",
+                encoding="utf-8",
+            )
+            (cache_dir / "kev.json").write_text(
+                json.dumps({"vulnerabilities": [{"cveID": "CVE-2017-5638"}]}),
+                encoding="utf-8",
+            )
+            (cache_dir / "metadata.json").write_text(
+                json.dumps({"epss_updated": datetime.now().isoformat(), "kev_updated": datetime.now().isoformat()}),
+                encoding="utf-8",
+            )
+            monkeypatch.setattr(enrichment, "CACHE_DIR", cache_dir)
 
             results = triage(trivy_json, tmp_path, prioritize_risk=True)
             assert len(results) == 2
