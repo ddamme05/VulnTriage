@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import os
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -88,14 +89,25 @@ def discover_python_files(
 
     files: list[Path] = []
 
-    # TODO: rglob traverses all directories including excluded ones.
-    # For large repos with big .venv/node_modules, consider os.walk() with pruning.
-    for path in src.rglob("*.py"):
-        # Skip excluded directories
-        if _should_exclude(path, patterns, include_tests):
-            continue
+    for root, dirs, file_names in os.walk(src):
+        root_path = Path(root)
 
-        files.append(path)
+        # Prune excluded directories before descending.
+        pruned: list[str] = []
+        for dir_name in dirs:
+            if _should_exclude(root_path / dir_name, patterns, include_tests):
+                pruned.append(dir_name)
+        for dir_name in pruned:
+            dirs.remove(dir_name)
+        dirs.sort()
+
+        for file_name in sorted(file_names):
+            if not file_name.endswith(".py"):
+                continue
+            path = root_path / file_name
+            if _should_exclude(path, patterns, include_tests):
+                continue
+            files.append(path)
 
     # Sort for determinism (per code-style-guide)
     return sorted(files)
