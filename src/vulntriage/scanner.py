@@ -6,6 +6,7 @@ import os
 from dataclasses import dataclass
 from pathlib import Path
 
+import pathspec
 import tree_sitter
 import tree_sitter_python
 
@@ -16,26 +17,31 @@ _LANGUAGE = tree_sitter.Language(tree_sitter_python.language())
 _PARSER = tree_sitter.Parser()
 _PARSER.language = _LANGUAGE
 
-# Default exclusion patterns (per DESIGN_RATIONALE.md)
-DEFAULT_EXCLUDE_PATTERNS = frozenset({
-    "__pycache__",
-    ".git",
-    ".venv",
-    "venv",
-    ".tox",
-    ".mypy_cache",
-    ".pytest_cache",
-    "node_modules",
-    ".eggs",
-    "*.egg-info",
-    "build",
-    "dist",
+# Default exclusion patterns (gitignore-style, relative to src)
+DEFAULT_EXCLUDE_PATTERNS = (
+    "__pycache__/",
+    ".git/",
+    "/.venv/",
+    "/venv/",
+    "/.tox/",
+    "/.mypy_cache/",
+    "/.pytest_cache/",
+    "/node_modules/",
+    ".eggs/",
+    "*.egg-info/",
+    "/build/",
+    "/dist/",
     # Non-production paths (per design doc defaults)
-    "docs",
-    "examples",
-    "vendor",
-    "notebooks",
-})
+    "/docs/",
+    "/examples/",
+    "/vendor/",
+    "/notebooks/",
+)
+
+TEST_EXCLUDE_PATTERNS = (
+    "tests/",
+    "test_*.py",
+)
 
 # Maximum file size to parse (1MB default - prevents DoS on huge generated files)
 MAX_FILE_SIZE_BYTES = 1_000_000
@@ -64,14 +70,14 @@ class ScanDirectoryResult:
 
 def discover_python_files(
     src: Path,
-    exclude_patterns: frozenset[str] | None = None,
+    exclude_patterns: tuple[str, ...] | None = None,
     include_tests: bool = False,
 ) -> list[Path]:
     """Recursively discover all Python files in a directory.
 
     Args:
         src: Root directory to scan.
-        exclude_patterns: Patterns to exclude (directory/file names).
+        exclude_patterns: Gitignore-style patterns to exclude (relative to src).
         include_tests: If False, exclude tests/ and test_*.py files.
 
     Returns:
@@ -86,6 +92,10 @@ def discover_python_files(
         return []
 
     patterns = exclude_patterns if exclude_patterns is not None else DEFAULT_EXCLUDE_PATTERNS
+    if not include_tests:
+        patterns = patterns + TEST_EXCLUDE_PATTERNS
+    patterns = patterns + _load_vulntriageignore(src)
+    spec = pathspec.PathSpec.from_lines("gitwildmatch", patterns)
 
     files: list[Path] = []
 
@@ -95,7 +105,7 @@ def discover_python_files(
         # Prune excluded directories before descending.
         pruned: list[str] = []
         for dir_name in dirs:
-            if _should_exclude(root_path / dir_name, patterns, include_tests):
+            if _matches_spec(root_path / dir_name, src, spec, is_dir=True):
                 pruned.append(dir_name)
         for dir_name in pruned:
             dirs.remove(dir_name)
@@ -105,7 +115,7 @@ def discover_python_files(
             if not file_name.endswith(".py"):
                 continue
             path = root_path / file_name
-            if _should_exclude(path, patterns, include_tests):
+            if _matches_spec(path, src, spec, is_dir=False):
                 continue
             files.append(path)
 
@@ -113,29 +123,36 @@ def discover_python_files(
     return sorted(files)
 
 
-def _should_exclude(path: Path, patterns: frozenset[str], include_tests: bool) -> bool:
+def _matches_spec(path: Path, root: Path, spec: pathspec.PathSpec, is_dir: bool) -> bool:
     """Check if a path should be excluded from scanning."""
-    parts = path.parts
+    rel = path.relative_to(root).as_posix()
+    if is_dir and not rel.endswith("/"):
+        rel = f"{rel}/"
+    return spec.match_file(rel)
 
-    # Check each part against exclusion patterns
-    for part in parts:
-        if part in patterns:
-            return True
-        # Handle wildcard patterns like *.egg-info
-        for pattern in patterns:
-            if pattern.startswith("*") and part.endswith(pattern[1:]):
-                return True
 
-    # Test exclusion (tests/ directory and test_*.py files)
-    if not include_tests:
-        # Exclude tests/ directory only (not arbitrary 'test' in path)
-        if "tests" in parts:
-            return True
-        # Exclude test_*.py files only (not *_test.py)
-        if path.name.startswith("test_"):
-            return True
+def _load_vulntriageignore(root: Path) -> tuple[str, ...]:
+    """Load .vulntriageignore patterns from the repo root."""
+    ignore_path = root / ".vulntriageignore"
+    if not ignore_path.is_file():
+        return ()
+    try:
+        lines = ignore_path.read_text(encoding="utf-8").splitlines()
+    except UnicodeDecodeError as exc:
+        import warnings
 
-    return False
+        warnings.warn(
+            f"Unable to read {ignore_path}: {exc}. Ignoring custom patterns.",
+            stacklevel=2,
+        )
+        return ()
+    patterns: list[str] = []
+    for line in lines:
+        stripped = line.strip()
+        if not stripped or stripped.startswith("#"):
+            continue
+        patterns.append(stripped)
+    return tuple(patterns)
 
 
 def parse_file(path: Path) -> tree_sitter.Tree:
@@ -178,14 +195,14 @@ def scan_file(path: Path) -> ParsedFile:
 
 def scan_directory(
     src: Path,
-    exclude_patterns: frozenset[str] | None = None,
+    exclude_patterns: tuple[str, ...] | None = None,
     include_tests: bool = False,
 ) -> ScanDirectoryResult:
     """Discover and parse all Python files in a directory.
 
     Args:
         src: Root directory to scan.
-        exclude_patterns: Patterns to exclude.
+        exclude_patterns: Gitignore-style patterns to exclude.
         include_tests: If False, exclude test files.
 
     Returns:

@@ -86,6 +86,38 @@ def test_discover_excludes_docs_examples_vendor() -> None:
         assert files[0].name == "app.py"
 
 
+def test_discover_does_not_exclude_nested_build_dir() -> None:
+    """Nested build/ directories should not be excluded when only root is excluded."""
+    with tempfile.TemporaryDirectory() as tmp:
+        tmp_path = Path(tmp)
+        (tmp_path / "build").mkdir()
+        (tmp_path / "build" / "skip.py").write_text("")
+        (tmp_path / "pkg").mkdir()
+        (tmp_path / "pkg" / "build").mkdir()
+        (tmp_path / "pkg" / "build" / "keep.py").write_text("")
+        (tmp_path / "app.py").write_text("")
+
+        files = discover_python_files(tmp_path)
+        names = {f.name for f in files}
+        assert "app.py" in names
+        assert "keep.py" in names
+        assert "skip.py" not in names
+
+
+def test_discover_respects_vulntriageignore() -> None:
+    """.vulntriageignore patterns should exclude matching files."""
+    with tempfile.TemporaryDirectory() as tmp:
+        tmp_path = Path(tmp)
+        (tmp_path / ".vulntriageignore").write_text("skip.py\n", encoding="utf-8")
+        (tmp_path / "skip.py").write_text("")
+        (tmp_path / "keep.py").write_text("")
+
+        files = discover_python_files(tmp_path)
+        names = {f.name for f in files}
+        assert "keep.py" in names
+        assert "skip.py" not in names
+
+
 def test_discover_excludes_tests_by_default() -> None:
     """tests/ directory and test_*.py files excluded by default."""
     with tempfile.TemporaryDirectory() as tmp:
