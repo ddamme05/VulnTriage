@@ -90,6 +90,22 @@ Offline guard:
 
 Both prevent refresh/network calls and fail fast if a refresh is attempted.
 
+### Custom ignore rules (for consumers)
+
+Create a `.vulntriageignore` file at repo root to add or override ignore patterns.
+It uses **gitignore-style** syntax (via `pathspec`) and is applied after the defaults.
+
+Example:
+
+```
+# Ignore generated code
+generated/
+
+# Re-include tests (override default excludes)
+!tests/
+!test_*.py
+```
+
 ### Custom EPSS/KEV files
 
 ```bash

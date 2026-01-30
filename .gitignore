@@ -1,5 +1,7 @@
 # Generated files
 test-repos/
+.agent/
+.tmp/
 
 # Verification script outputs
 scripts/*.txt
