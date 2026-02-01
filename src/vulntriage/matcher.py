@@ -7,6 +7,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING
 
 from .cve_function_map import get_vulnerable_functions, matches_vulnerable_function
+from .dependency_graph import DependencyGraph
 from .models import EvidenceRef, ScanResult, TriageStatus, Vulnerability
 from .package_map import canonicalize_package_name
 
@@ -49,6 +50,7 @@ def match_vulnerabilities(
     analysis_map: dict[Path, FileAnalysis],
     package_to_modules: dict[str, list[str]],
     cve_function_map: dict[str, set[str]] | None = None,
+    dependency_graph: DependencyGraph | None = None,
 ) -> list[ScanResult]:
     """Match vulnerabilities against discovered call sites.
 
@@ -65,6 +67,9 @@ def match_vulnerabilities(
         List of ScanResult objects (the canonical output type).
     """
     results: list[ScanResult] = []
+    resolver = None
+    if dependency_graph:
+        resolver = _PackageStatusResolver(analysis_map, package_to_modules, dependency_graph)
 
     for vuln in vulnerabilities:
         # Get the module names for this package (use shared canonicalization)
@@ -126,8 +131,21 @@ def match_vulnerabilities(
                     f"{uncertainty_reasons[0]}"
                 )
             else:
-                status = "dismissed"
-                reason = f"Package '{vuln.pkg_name}' is not imported in any application code"
+                if vuln.proximity == "transitive":
+                    if resolver and resolver.is_transitively_dismissed(canonical_name):
+                        status = "dismissed"
+                        reason = (
+                            f"Transitive package '{vuln.pkg_name}' is not imported and "
+                            "all parent paths are dismissed"
+                        )
+                    else:
+                        status = "needs_review"
+                        reason = (
+                            f"Transitive package '{vuln.pkg_name}' has no direct import evidence"
+                        )
+                else:
+                    status = "dismissed"
+                    reason = f"Package '{vuln.pkg_name}' is not imported in any application code"
         elif not matching_calls:
             status = "needs_review"
             reason = f"Package '{vuln.pkg_name}' is imported but no direct calls found"
@@ -178,3 +196,89 @@ def match_vulnerabilities(
         ))
 
     return results
+
+
+class _PackageStatusResolver:
+    """Resolve import evidence and safe transitive dismissal via dependency graph."""
+
+    def __init__(
+        self,
+        analysis_map: dict[Path, FileAnalysis],
+        package_to_modules: dict[str, list[str]],
+        dependency_graph: DependencyGraph,
+    ) -> None:
+        self._analysis_map = analysis_map
+        self._package_to_modules = package_to_modules
+        self._graph = dependency_graph
+        self._imported_roots = self._collect_imported_roots()
+        self._uncertainty_cache: dict[str, bool] = {}
+        self._status_cache: dict[str, str] = {}
+        self._dismiss_cache: dict[str, bool] = {}
+
+    def is_transitively_dismissed(self, pkg: str) -> bool:
+        return self._is_dismissed_by_parents(pkg, visited=set())
+
+    def _collect_imported_roots(self) -> set[str]:
+        imported_roots: set[str] = set()
+        for analysis in self._analysis_map.values():
+            imported_roots.update(analysis.get_imported_root_modules())
+        return imported_roots
+
+    def _package_status(self, pkg: str) -> str:
+        if pkg in self._status_cache:
+            return self._status_cache[pkg]
+        modules = self._package_to_modules.get(pkg, [])
+        if not modules:
+            self._status_cache[pkg] = "unknown"
+            return "unknown"
+        if any(module.split(".")[0] in self._imported_roots for module in modules):
+            self._status_cache[pkg] = "imported"
+            return "imported"
+        if any(self._module_uncertain(module) for module in modules):
+            self._status_cache[pkg] = "uncertain"
+            return "uncertain"
+        self._status_cache[pkg] = "not_imported"
+        return "not_imported"
+
+    def _module_uncertain(self, module: str) -> bool:
+        if module in self._uncertainty_cache:
+            return self._uncertainty_cache[module]
+        for analysis in self._analysis_map.values():
+            if analysis.symbol_table.has_uncertainty_for_module(module):
+                self._uncertainty_cache[module] = True
+                return True
+        self._uncertainty_cache[module] = False
+        return False
+
+    def _is_dismissed_by_parents(self, pkg: str, visited: set[str]) -> bool:
+        if pkg in self._dismiss_cache:
+            return self._dismiss_cache[pkg]
+        if pkg in visited:
+            return False
+        visited.add(pkg)
+
+        if self._package_status(pkg) != "not_imported":
+            self._dismiss_cache[pkg] = False
+            visited.remove(pkg)
+            return False
+
+        if pkg in self._graph.direct:
+            self._dismiss_cache[pkg] = True
+            visited.remove(pkg)
+            return True
+
+        parents = self._graph.get_parents(pkg)
+        if not parents:
+            self._dismiss_cache[pkg] = False
+            visited.remove(pkg)
+            return False
+
+        for parent in parents:
+            if not self._is_dismissed_by_parents(parent, visited):
+                self._dismiss_cache[pkg] = False
+                visited.remove(pkg)
+                return False
+
+        self._dismiss_cache[pkg] = True
+        visited.remove(pkg)
+        return True

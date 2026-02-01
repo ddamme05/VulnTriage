@@ -61,6 +61,30 @@ def scan(
             help="Include test files in analysis.",
         ),
     ] = False,
+    include_dev: Annotated[
+        bool,
+        typer.Option(
+            "--include-dev",
+            help="Include dev/optional dependency groups when determining proximity.",
+        ),
+    ] = False,
+    proximity: Annotated[
+        bool,
+        typer.Option(
+            "--proximity/--no-proximity",
+            help="Enable direct/transitive dependency detection when lockfiles exist.",
+        ),
+    ] = True,
+    lockfile: Annotated[
+        Path | None,
+        typer.Option(
+            "--lockfile",
+            help="Path to lockfile for dependency proximity detection.",
+            exists=True,
+            dir_okay=False,
+            readable=True,
+        ),
+    ] = None,
     json_output: Annotated[
         bool,
         typer.Option(
@@ -275,6 +299,10 @@ def scan(
         src,
         include_tests=include_tests,
         strict=strict,
+        include_dev=include_dev,
+        proximity=proximity,
+        lockfile=lockfile,
+        warn_on_missing_lockfile=True,
         enrich=enrich,
         epss_file=epss_file,
         kev_file=kev_file,
@@ -318,6 +346,7 @@ def _output_json(results: list["ScanResult"]) -> None:
             "cvss_score": r.vulnerability.cvss_score,
             "epss_score": r.vulnerability.epss_score,
             "is_kev": r.vulnerability.is_kev,
+            "proximity": r.vulnerability.proximity,
             "status": r.status,
             "reason": r.reason,
             "evidence": [

@@ -7,10 +7,11 @@ from typing import TYPE_CHECKING
 
 from .analyzer import find_call_sites
 from .cve_function_map import load_cve_function_map
+from .dependency_graph import build_dependency_graph
 from .enrichment import enrich_vulnerabilities, refresh_epss_data, refresh_kev_data
 from .matcher import FileAnalysis, match_vulnerabilities
 from .models import ScanResult
-from .package_map import build_package_map
+from .package_map import build_package_map, canonicalize_package_name
 from .scanner import scan_directory
 from .trivy_adapter import load_trivy_report
 
@@ -24,7 +25,11 @@ def triage(
     trivy_json: Path,
     src: Path,
     include_tests: bool = False,
+    include_dev: bool = False,
     strict: bool = False,
+    proximity: bool = True,
+    lockfile: Path | None = None,
+    warn_on_missing_lockfile: bool = False,
     enrich: bool = True,
     epss_file: Path | None = None,
     kev_file: Path | None = None,
@@ -50,7 +55,11 @@ def triage(
         trivy_json: Path to Trivy JSON report.
         src: Path to source directory to analyze.
         include_tests: If True, include test files in analysis.
+        include_dev: If True, include dev dependencies for proximity detection.
         strict: If True, prevent dismissals when any files were skipped.
+        proximity: If True, attempt direct/transitive dependency detection.
+        lockfile: Optional explicit lockfile path for proximity detection.
+        warn_on_missing_lockfile: If True, warn when no supported lockfile is found.
         enrich: If True, enrich vulnerabilities with EPSS/KEV data.
         epss_file: Optional custom EPSS CSV path.
         kev_file: Optional custom KEV JSON path.
@@ -95,11 +104,26 @@ def triage(
     # Stage 3: Build package map
     package_to_modules = build_package_map()
 
+    # Stage 3b: Dependency proximity (optional)
+    dependency_graph = None
+    if proximity:
+        dependency_graph = build_dependency_graph(src, lockfile=lockfile, include_dev=include_dev)
+        if dependency_graph is None:
+            if warn_on_missing_lockfile:
+                import warnings
+                warnings.warn(
+                    "No supported lockfile found; proximity detection disabled.",
+                    stacklevel=2,
+                )
+        else:
+            for vuln in vulnerabilities:
+                canonical = canonicalize_package_name(vuln.pkg_name)
+                vuln.proximity = dependency_graph.proximity(canonical)
+
     # Get target modules for filtering call sites
     target_modules: set[str] = set()
     for vuln in vulnerabilities:
         # Look up modules for this package
-        from .package_map import canonicalize_package_name
         canonical = canonicalize_package_name(vuln.pkg_name)
         modules = package_to_modules.get(canonical, [])
         target_modules.update(modules)
@@ -135,6 +159,7 @@ def triage(
         analysis_map,
         package_to_modules,
         cve_function_map,
+        dependency_graph=dependency_graph,
     )
 
     # Strict mode: if any files were skipped, prevent dismissals
