@@ -34,11 +34,11 @@ if [[ ! -f "$FN_MAP" ]]; then
 fi
 
 echo "--- Run WITHOUT function map ---" | tee -a "$OUTPUT_FILE"
-uv run vulntriage scan -t "$TRIVY_JSON" -s "$SRC_DIR" --no-enrich 2>&1 | head -30 | tee -a "$OUTPUT_FILE"
+uv run vulntriage scan -t "$TRIVY_JSON" -s "$SRC_DIR" --no-enrich --no-json 2>&1 | head -30 | tee -a "$OUTPUT_FILE"
 echo "" | tee -a "$OUTPUT_FILE"
 
 echo "--- Run WITH function map ---" | tee -a "$OUTPUT_FILE"
-uv run vulntriage scan -t "$TRIVY_JSON" -s "$SRC_DIR" --no-enrich --cve-function-map "$FN_MAP" 2>&1 | head -30 | tee -a "$OUTPUT_FILE"
+uv run vulntriage scan -t "$TRIVY_JSON" -s "$SRC_DIR" --no-enrich --cve-function-map "$FN_MAP" --no-json 2>&1 | head -30 | tee -a "$OUTPUT_FILE"
 echo "" | tee -a "$OUTPUT_FILE"
 
 # Count results with/without function map
