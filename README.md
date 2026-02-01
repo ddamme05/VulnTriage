@@ -25,6 +25,7 @@ so teams can prioritize fixes that are actually relevant to their code.
 - **Offline-first**: no network calls unless you explicitly refresh or enable AI
 - **Threat intel enrichment**: EPSS/KEV for risk-aware ordering (cache + refresh)
 - **Strict mode**: prevents dismissals if any files are skipped
+- **Direct vs transitive detection**: lockfile-based proximity for safer triage
 - **VEX exports**: CycloneDX VEX 1.5 and OpenVEX 0.2.0
 - **Optional function-level matching**: CVE → function map (opt-in)
 - **Optional AI advisory**: analysis only, never changes classification
@@ -58,10 +59,50 @@ uv run vulntriage scan --trivy-json trivy.json --src . --prioritize-risk
 uv run vulntriage scan --trivy-json trivy.json --src .
 ```
 
+### Zero-config scan (auto-discovery)
+
+If `trivy.json` is in the repo root, you can run:
+
+```bash
+uv run vulntriage scan
+```
+
+### Dry run (show resolved inputs)
+
+```bash
+uv run vulntriage scan --dry-run
+```
+
+### Config file (optional)
+
+Prefer `pyproject.toml` (Pythonic), with `.vulntriage.toml` also supported.
+
+```toml
+[tool.vulntriage]
+trivy_json = "trivy.json"
+src = "."
+lockfile = "uv.lock"
+include_tests = false
+include_dev = false
+proximity = true
+enrich = false
+prioritize_risk = false
+```
+
+Environment overrides:
+- `TRIVY_JSON` (Trivy report path)
+- `VULNTRIAGE_LOCKFILE` (lockfile override)
+
 ### JSON output (CI-friendly)
 
 ```bash
 uv run vulntriage scan --trivy-json trivy.json --src . --json > results.json
+```
+
+Force table output when piping:
+
+```bash
+uv run vulntriage scan --trivy-json trivy.json --src . --no-json
 ```
 
 ### Fail-closed strict mode
@@ -69,6 +110,34 @@ uv run vulntriage scan --trivy-json trivy.json --src . --json > results.json
 ```bash
 uv run vulntriage scan --trivy-json trivy.json --src . --strict
 ```
+
+### Dependency proximity (direct vs transitive)
+
+By default, VulnTriage attempts to detect dependency proximity from lockfiles.
+You can override or disable it:
+
+```bash
+# Explicit lockfile
+uv run vulntriage scan --trivy-json trivy.json --src . --lockfile poetry.lock
+
+# Disable proximity detection
+uv run vulntriage scan --trivy-json trivy.json --src . --no-proximity
+
+# Include dev/optional dependency groups in proximity
+uv run vulntriage scan --trivy-json trivy.json --src . --include-dev
+```
+
+### Proximity verification (this repo)
+
+Run a repo-only check that prints a lockfile graph summary (direct vs transitive)
+and a vulnerability proximity summary (if any CVEs are found):
+
+```bash
+./scripts/verify_proximity_repo.sh
+```
+
+If Trivy finds 0 vulnerabilities, the proximity summary will be empty; the
+lockfile graph summary still validates direct vs transitive mapping.
 
 ### Offline-first workflow (security posture)
 
