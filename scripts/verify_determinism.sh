@@ -46,13 +46,13 @@ EOF
 
 echo "--- Run 1 ---"
 cd "$PROJECT_ROOT"
-uv run vulntriage scan --trivy-json "$TEMP_DIR/trivy.json" --src "$TEMP_DIR/src" --json > "$TEMP_DIR/run1.json" 2> "$TEMP_DIR/run1.log"
+uv run vulntriage scan --trivy-json "$TEMP_DIR/trivy.json" --src "$TEMP_DIR/src" --no-proximity --json > "$TEMP_DIR/run1.json" 2> "$TEMP_DIR/run1.log"
 
 echo "--- Run 2 ---"
-uv run vulntriage scan --trivy-json "$TEMP_DIR/trivy.json" --src "$TEMP_DIR/src" --json > "$TEMP_DIR/run2.json" 2> "$TEMP_DIR/run2.log"
+uv run vulntriage scan --trivy-json "$TEMP_DIR/trivy.json" --src "$TEMP_DIR/src" --no-proximity --json > "$TEMP_DIR/run2.json" 2> "$TEMP_DIR/run2.log"
 
 echo "--- Run 3 ---"
-uv run vulntriage scan --trivy-json "$TEMP_DIR/trivy.json" --src "$TEMP_DIR/src" --json > "$TEMP_DIR/run3.json" 2> "$TEMP_DIR/run3.log"
+uv run vulntriage scan --trivy-json "$TEMP_DIR/trivy.json" --src "$TEMP_DIR/src" --no-proximity --json > "$TEMP_DIR/run3.json" 2> "$TEMP_DIR/run3.log"
 
 echo ""
 echo "=== Comparing Outputs ==="

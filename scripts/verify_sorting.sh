@@ -40,7 +40,7 @@ echo "x = 1" > "$TEMP_DIR/src/app.py"
 cd "$PROJECT_ROOT"
 
 echo "--- Test 1: Default Sorting (by severity) ---"
-uv run vulntriage scan --trivy-json "$TEMP_DIR/trivy.json" --src "$TEMP_DIR/src" --json 2> "$TEMP_DIR/default.log" > "$TEMP_DIR/default_sort.json"
+uv run vulntriage scan --trivy-json "$TEMP_DIR/trivy.json" --src "$TEMP_DIR/src" --no-proximity --json 2> "$TEMP_DIR/default.log" > "$TEMP_DIR/default_sort.json"
 
 echo "Expected order: CRITICAL -> HIGH -> MEDIUM -> LOW"
 echo "Actual order:"
@@ -69,7 +69,7 @@ fi
 
 echo ""
 echo "--- Test 2: Risk-based Sorting (KEV -> EPSS -> severity) ---"
-uv run vulntriage scan --trivy-json "$TEMP_DIR/trivy.json" --src "$TEMP_DIR/src" --prioritize-risk --json 2> "$TEMP_DIR/risk.log" > "$TEMP_DIR/risk_sort.json"
+uv run vulntriage scan --trivy-json "$TEMP_DIR/trivy.json" --src "$TEMP_DIR/src" --no-proximity --prioritize-risk --json 2> "$TEMP_DIR/risk.log" > "$TEMP_DIR/risk_sort.json"
 
 echo "Expected: KEV items first (CVE-2021-44228, CVE-2023-44487), then by EPSS"
 echo "Actual order:"
@@ -100,8 +100,8 @@ fi
 
 echo ""
 echo "--- Test 3: Sorting Determinism (multiple runs with same flags) ---"
-uv run vulntriage scan --trivy-json "$TEMP_DIR/trivy.json" --src "$TEMP_DIR/src" --prioritize-risk --json 2> "$TEMP_DIR/risk2.log" > "$TEMP_DIR/risk_sort_2.json"
-uv run vulntriage scan --trivy-json "$TEMP_DIR/trivy.json" --src "$TEMP_DIR/src" --prioritize-risk --json 2> "$TEMP_DIR/risk3.log" > "$TEMP_DIR/risk_sort_3.json"
+uv run vulntriage scan --trivy-json "$TEMP_DIR/trivy.json" --src "$TEMP_DIR/src" --no-proximity --prioritize-risk --json 2> "$TEMP_DIR/risk2.log" > "$TEMP_DIR/risk_sort_2.json"
+uv run vulntriage scan --trivy-json "$TEMP_DIR/trivy.json" --src "$TEMP_DIR/src" --no-proximity --prioritize-risk --json 2> "$TEMP_DIR/risk3.log" > "$TEMP_DIR/risk_sort_3.json"
 
 DIFF=$(diff "$TEMP_DIR/risk_sort.json" "$TEMP_DIR/risk_sort_2.json" || true)
 if [ -z "$DIFF" ]; then
