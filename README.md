@@ -20,6 +20,7 @@ so teams can prioritize fixes that are actually relevant to their code.
 
 ## Standout features
 
+- **Zero-config workflow**: auto-discovers inputs, supports `pyproject.toml` / `.vulntriage.toml`
 - **Evidence-based classification**: imports + call sites drive status
 - **Fail-closed by default**: uncertainty → `needs_review`, never auto-dismissed
 - **Offline-first**: no network calls unless you explicitly refresh or enable AI
@@ -36,7 +37,7 @@ so teams can prioritize fixes that are actually relevant to their code.
 ### 1) Generate a Trivy report
 
 ```bash
-trivy fs . --format json --output trivy.json
+trivy fs --scanners vuln --format json --output trivy.json .
 ```
 
 ### 2) Run VulnTriage
@@ -45,53 +46,89 @@ trivy fs . --format json --output trivy.json
 uv run vulntriage scan --trivy-json trivy.json --src .
 ```
 
-### 3) Risk-based sorting (optional)
-
-```bash
-uv run vulntriage scan --trivy-json trivy.json --src . --prioritize-risk
-```
-
-## Usage cookbook
-
-### Minimal scan
-
-```bash
-uv run vulntriage scan --trivy-json trivy.json --src .
-```
-
-### Zero-config scan (auto-discovery)
-
-If `trivy.json` is in the repo root, you can run:
+Or, if you have a config file (see below), just:
 
 ```bash
 uv run vulntriage scan
 ```
 
-### Dry run (show resolved inputs)
+## Configuration
 
-```bash
-uv run vulntriage scan --dry-run
-```
+VulnTriage supports project-level configuration so you don't have to pass the
+same flags every time. Drop a config file in your repo and `vulntriage scan`
+picks it up automatically.
 
-### Config file (optional)
+### Config file formats
 
-Prefer `pyproject.toml` (Pythonic), with `.vulntriage.toml` also supported.
+**Option A — `pyproject.toml`** (recommended for Python projects):
 
 ```toml
 [tool.vulntriage]
 trivy_json = "trivy.json"
 src = "."
 lockfile = "uv.lock"
-include_tests = false
-include_dev = false
+include_dev = true
 proximity = true
-enrich = false
-prioritize_risk = false
+enrich = true
 ```
 
-Environment overrides:
-- `TRIVY_JSON` (Trivy report path)
-- `VULNTRIAGE_LOCKFILE` (lockfile override)
+**Option B — `.vulntriage.toml`** (standalone, any project):
+
+```toml
+[scan]
+trivy-json = "trivy.json"
+src = "."
+include-dev = true
+json = true
+```
+
+Both formats support all CLI flags. Key names are normalized (dashes and
+underscores are interchangeable, `json` maps to `--json`).
+
+### Resolution order
+
+Every option follows a 4-tier precedence (highest wins):
+
+| Priority | Source | Example |
+|----------|--------|---------|
+| 1 | CLI flag | `--trivy-json report.json` |
+| 2 | Environment variable | `TRIVY_JSON=report.json` |
+| 3 | Config file | `trivy_json = "report.json"` |
+| 4 | Auto-discovery / default | Finds `trivy.json` in repo root |
+
+Environment variables:
+- `TRIVY_JSON` — Trivy report path
+- `VULNTRIAGE_LOCKFILE` — lockfile override
+- `VULNTRIAGE_OFFLINE` — disable network access
+
+### Dry run
+
+Use `--dry-run` to see where every resolved value came from without running the scan:
+
+```bash
+uv run vulntriage scan --dry-run
+```
+
+```
+VulnTriage - Dry Run
+  Trivy JSON: /path/to/trivy.json (config:.vulntriage.toml)
+  Source:     /path/to/src (config:.vulntriage.toml)
+  Lockfile:   /path/to/uv.lock (auto)
+  Proximity:  enabled (default)
+  JSON:       off (default)
+```
+
+The `(config:...)`, `(auto)`, `(cli)`, and `(default)` labels show exactly
+where each value was resolved from.
+
+### Config file discovery
+
+VulnTriage walks **up** the directory tree from your working directory to find
+the config, so it works from any subdirectory. If both `pyproject.toml` and
+`.vulntriage.toml` exist and have conflicting keys, `pyproject.toml` wins and
+a warning is printed.
+
+## Usage cookbook
 
 ### JSON output (CI-friendly)
 
