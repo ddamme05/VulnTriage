@@ -38,6 +38,15 @@ if ! command -v trivy &> /dev/null; then
     echo "Install: https://aquasecurity.github.io/trivy/latest/getting-started/installation/"
     exit 1
 fi
+# SECURITY: Block compromised Trivy >= v0.69.4 (TeamPCP supply chain attack, 2026-03-19)
+# Safe versions: v0.69.3 and earlier. v0.69.4+ are compromised or unverified.
+# See: https://github.com/aquasecurity/trivy/security/advisories/GHSA-69fq-xp46-6x23
+TRIVY_VER=$(trivy --version 2>/dev/null | grep -oP 'Version: \K[0-9.]+' || true)
+if [[ -n "$TRIVY_VER" ]] && printf '%s\n' "0.69.4" "$TRIVY_VER" | sort -V | head -n1 | grep -q "0.69.4"; then
+    echo "❌ ERROR: Trivy version v${TRIVY_VER} is compromised or unverified. Aborting."
+    echo "Install v0.69.3 or earlier: https://github.com/aquasecurity/trivy/security/advisories/GHSA-69fq-xp46-6x23"
+    exit 1
+fi
 trivy fs --scanners vuln --format json --quiet "$SRC_DIR" 2>/dev/null > "$TRIVY_JSON"
 
 echo "--- Running VulnTriage ---"
